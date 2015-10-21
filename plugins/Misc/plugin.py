@@ -327,31 +327,8 @@ class Misc(callbacks.Plugin):
 
         Returns the version of the current bot.
         """
-        try:
-            newestUrl = 'https://api.github.com/repos/ProgVal/Limnoria/' + \
-                    'commits/%s'
-            versions = {}
-            for branch in ('master', 'testing'):
-                data = json.loads(utils.web.getUrl(newestUrl % branch)
-                        .decode('utf8'))
-                version = data['commit']['committer']['date']
-                # Strip the last 'Z':
-                version = version.rsplit('T', 1)[0].replace('-', '.')
-                if minisix.PY2 and isinstance(version, unicode):
-                    version = version.encode('utf8')
-                versions[branch] = version
-            newest = _('The newest versions available online are %s.') % \
-                    ', '.join([_('%s (in %s)') % (y,x)
-                               for x,y in versions.items()])
-        except utils.web.Error as e:
-            self.log.info('Couldn\'t get website version: %s', e)
-            newest = _('I couldn\'t fetch the newest version '
-                     'from the Limnoria repository.')
-        s = _('The current (running) version of this Supybot is %s, '
-              'running on Python %s.  %s') % \
-            (conf.version, sys.version.replace('\n', ' '), newest)
-        irc.reply(s)
-    version = wrap(thread(version))
+        irc.reply(_('Mozilla/5.0 (Linux; U; x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 MystiqueIRCBot'))
+    version = wrap(version)
 
     @internationalizeDocstring
     def source(self, irc, msg, args):
@@ -359,7 +336,7 @@ class Misc(callbacks.Plugin):
 
         Returns a URL saying where to get Limnoria.
         """
-        irc.reply(_('My source is at https://github.com/ProgVal/Limnoria'))
+        irc.reply(_('The clouds'))
     source = wrap(source)
 
     @internationalizeDocstring

@@ -91,7 +91,7 @@ class Ctcp(callbacks.PluginRegexp):
     def ctcpVersion(self, irc, msg, match):
         "^\x01VERSION\x01$"
         self.log.info('Received CTCP VERSION from %s', msg.prefix)
-        self._reply(irc, msg, 'VERSION Supybot %s' % conf.version)
+        self._reply(irc, msg, 'VERSION Mystique r1' % conf.version)
 
     def ctcpUserinfo(self, irc, msg, match):
         "^\x01USERINFO\x01$"
@@ -107,13 +107,13 @@ class Ctcp(callbacks.PluginRegexp):
         "^\x01FINGER\x01$"
         self.log.info('Received CTCP FINGER from %s', msg.prefix)
         self._reply(irc, msg, 'FINGER ' + 
-                    _('Supybot, the best Python IRC bot in existence!'))
+                    _('Mystique r1'))
 
     def ctcpSource(self, irc, msg, match):
         "^\x01SOURCE\x01$"
         self.log.info('Received CTCP SOURCE from %s', msg.prefix)
         self._reply(irc, msg,
-                    'SOURCE https://github.com/ProgVal/Limnoria')
+                    'SOURCE Can you keep a secret? So can I.')
 
     def doNotice(self, irc, msg):
         if ircmsgs.isCtcp(msg):
