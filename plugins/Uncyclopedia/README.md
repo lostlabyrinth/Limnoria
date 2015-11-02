@@ -1,1 +1,1 @@
-Contains functionality specific to Uncyclopedia (#unyclopedia on chat.freenode.net)
+Contains functionality specific to Uncyclopedia (#uncyclopedia on chat.freenode.net)
