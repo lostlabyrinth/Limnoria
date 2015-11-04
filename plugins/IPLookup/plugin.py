@@ -184,7 +184,7 @@ class IPLookup(callbacks.Plugin):
         latitude = jsondata.get('latitude')
         ip = jsondata.get('ip')
 
-        if ip and isp and city and region and country_code and longitude and latitude:
+        if ip:
             output = "IP: {0} | ISP: {1} | City: {2} | Region: {3}, {4} | Longitude: {5} | Latitude: {6}".format(self._bu(ip), isp, city, region, country_code, longitude, latitude)
             irc.reply(output)
         else:
