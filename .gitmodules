@@ -1,0 +1,3 @@
+[submodule "ChanTracker"]
+	path = plugins/ChanTracker
+	url = https://github.com/lostlabyrinth/ChanTracker.git
