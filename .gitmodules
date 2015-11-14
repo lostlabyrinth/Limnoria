@@ -1,3 +1,6 @@
 [submodule "plugins/ChanTracker"]
 	path = plugins/ChanTracker
 	url = https://github.com/lostlabyrinth/ChanTracker
+[submodule "plugins/IPLookup"]
+	path = plugins/IPLookup
+	url = https://github.com/lostlabyrinth/IPLookup
