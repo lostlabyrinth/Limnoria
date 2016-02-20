@@ -107,13 +107,13 @@ class Ctcp(callbacks.PluginRegexp):
         "^\x01FINGER\x01$"
         self.log.info('Received CTCP FINGER from %s', msg.prefix)
         self._reply(irc, msg, 'FINGER ' + 
-                    _('Supybot, the best Python IRC bot in existence!'))
+                    _('MystiqueIRCBot r1'))
 
     def ctcpSource(self, irc, msg, match):
         "^\x01SOURCE\x01$"
         self.log.info('Received CTCP SOURCE from %s', msg.prefix)
         self._reply(irc, msg,
-                    'SOURCE https://github.com/ProgVal/Limnoria')
+                    'SOURCE I can keep a secret if you can.')
 
     def doNotice(self, irc, msg):
         if ircmsgs.isCtcp(msg):
