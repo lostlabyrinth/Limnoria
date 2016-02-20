@@ -50,19 +50,19 @@ class Uncyclopedia(callbacks.Plugin):
         """<text>
         Returns the URL for QDB.
         """
-        irc.reply(_('http://qdb.lostlabyrinth.xyz/quotes/uncyclopedia'))
+        irc.reply('http://qdb.lostlabyrinth.xyz/quotes/uncyclopedia')
 
     def stats(self, irc, msg, args, optip):
         """<text>
         Returns the URL for the stats page.
         """
-        irc.reply(_('http://lostlabyrinth.xyz/stats/uncyclopedia'))
+        irc.reply('http://lostlabyrinth.xyz/stats/uncyclopedia')
 
     def ustats(self, irc, msg, args, optip):
         """<text>
         Returns the URL quoted form of the text.
         """
-        irc.reply(_('http://lostlabyrinth.xyz/stats/uncyclopedia/user.php?cid=1&nick=%s'))
+        irc.reply('http://lostlabyrinth.xyz/stats/uncyclopedia/user.php?cid=1&nick=%s')
 
 
 Class = Uncyclopedia
