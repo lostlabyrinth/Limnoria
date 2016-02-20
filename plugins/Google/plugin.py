@@ -243,8 +243,7 @@ class Google(callbacks.PluginRegexp):
 
     def _translate(self, sourceLang, targetLang, text):
         headers = dict(utils.web.defaultHeaders)
-        headers['User-Agent'] = ('Mozilla/5.0 (X11; U; Linux i686) '
-                                 'Gecko/20071127 Firefox/2.0.0.11')
+        headers['User-Agent'] = ('Mozilla/5.0 (Linux; U; x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 MystiqueIRCBot')
 
         sourceLang = utils.web.urlquote(sourceLang)
         targetLang = utils.web.urlquote(targetLang)
@@ -314,7 +313,7 @@ class Google(callbacks.PluginRegexp):
         if not ircutils.isChannel(channel):
             channel = None
         url = self._googleUrl(expr, channel)
-        h = {"User-Agent":"Mozilla/5.0 (Windows NT 6.2; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1667.0 Safari/537.36"}
+        h = {"User-Agent":"Mozilla/5.0 (Linux; U; x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 MystiqueIRCBot"}
         html = utils.web.getUrl(url, headers=h).decode('utf8')
         match = self._calcRe1.search(html)
         if not match:

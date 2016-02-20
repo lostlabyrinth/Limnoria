@@ -80,6 +80,8 @@ class RegexpTimeout(Exception):
 class Misc(callbacks.Plugin):
     """Miscellaneous commands to access Supybot core. This is a core
     Supybot plugin that should not be removed!"""
+    threaded = True
+
     def __init__(self, irc):
         self.__parent = super(Misc, self)
         self.__parent.__init__(irc)
