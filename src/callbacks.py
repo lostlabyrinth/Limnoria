@@ -549,7 +549,9 @@ class RichReplyMethods(object):
             v = _('That\'s not a valid %s.') % what
         if 'Raise' not in kwargs:
             kwargs['Raise'] = True
-        return self._error(self.__makeReply(v, s), **kwargs)
+        if s:
+            v += ' ' + s
+        return self._error(v, **kwargs)
 
 _repr = repr
 
@@ -659,7 +661,7 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
         else:
             self.prefixNick = conf.supybot.reply.withNickPrefix()
 
-    def evalArgs(self):
+    def evalArgs(self, withClass=None):
         while self.counter < len(self.args):
             self.repliedTo = False
             if isinstance(self.args[self.counter], minisix.string_types):
@@ -676,8 +678,9 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
                 # evaluating its args, it will call our reply method, which
                 # will subsequently call this function again, and we'll
                 # pick up where we left off via self.counter.
-                self.__class__(self, self.msg,
-                               self.args[self.counter], nested=self.nested+1)
+                cls = withClass or self.__class__
+                cls(self, self.msg, self.args[self.counter],
+                        nested=self.nested+1)
                 # We have to return here because the new NestedCommandsIrcProxy
                 # might not have called our reply method instantly, since
                 # its command might be threaded.  So (obviously) we can't
@@ -905,7 +908,9 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
                         log.warning('Truncating to %s bytes from %s bytes.',
                                     maximumLength, len(s))
                         s = s[:maximumLength]
-                    if len(s) < allowedLength or \
+                    s_too_long = len(s.encode()) < allowedLength \
+                            if minisix.PY3 else len(s) < allowedLength
+                    if s_too_long or \
                        not conf.get(conf.supybot.reply.mores, target):
                         # In case we're truncating, we add 20 to allowedLength,
                         # because our allowedLength is shortened for the
@@ -985,6 +990,14 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
             else:
                 self.args[self.counter] = s
             self.evalArgs()
+
+    def replies(self, L, prefixer=None, joiner=None,
+                onlyPrefixFirst=False, to=None,
+                oneToOne=None, **kwargs):
+        if not self.finalEvaled and oneToOne is None:
+            oneToOne = True
+        return super(NestedCommandsIrcProxy, self).replies(L,
+                prefixer, joiner, onlyPrefixFirst, to, oneToOne, **kwargs)
 
     def error(self, s='', Raise=False, **kwargs):
         self.repliedTo = True

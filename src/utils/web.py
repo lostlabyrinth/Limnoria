@@ -80,9 +80,10 @@ _octet = r'(?:2(?:[0-4]\d|5[0-5])|1\d\d|\d{1,2})'
 _ipAddr = r'%s(?:\.%s){3}' % (_octet, _octet)
 # Base domain regex off RFC 1034 and 1738
 _label = r'[0-9a-z][-0-9a-z]*[0-9a-z]?'
+_scheme = r'[a-z][a-z0-9+.-]*'
 _domain = r'%s(?:\.%s)*\.[0-9a-z][-0-9a-z]+' % (_label, _label)
-_urlRe = r'(\w+://(?:\S+@)?(?:%s|%s)(?::\d+)?(?:/[^\])>\s]*)?)' % (_domain,
-                                                                   _ipAddr)
+_urlRe = r'(%s://(?:\S+@)?(?:%s|%s)(?::\d+)?(?:/[^\])>\s]*)?)' % (
+        _scheme, _domain, _ipAddr)
 urlRe = re.compile(_urlRe, re.I)
 _httpUrlRe = r'(https?://(?:\S+@)?(?:%s|%s)(?::\d+)?(?:/[^\])>\s]*)?)' % \
              (_domain, _ipAddr)
@@ -161,10 +162,11 @@ def getUrlFd(url, headers=None, data=None, timeout=None):
     except ValueError as e:
         raise Error(strError(e))
 
-def getUrl(url, size=None, headers=None, data=None, timeout=None):
-    """getUrl(url, size=None, headers=None, data=None, timeout=None)
+def getUrlTargetAndContent(url, size=None, headers=None, data=None, timeout=None):
+    """getUrlTargetAndContent(url, size=None, headers=None, data=None, timeout=None)
 
-    Gets a page.  Returns a string that is the page gotten.  Size is an integer
+    Gets a page.  Returns two strings that are the page gotten and the
+    target URL (ie. after redirections).  Size is an integer
     number of bytes to read from the URL.  Headers and data are dicts as per
     urllib.request.Request's arguments."""
     fd = getUrlFd(url, headers=headers, data=data, timeout=timeout)
@@ -175,8 +177,22 @@ def getUrl(url, size=None, headers=None, data=None, timeout=None):
             text = fd.read(size)
     except socket.timeout:
         raise Error(TIMED_OUT)
+    target = fd.geturl()
     fd.close()
+    return (target, text)
+
+def getUrlContent(*args, **kwargs):
+    """getUrlContent(url, size=None, headers=None, data=None, timeout=None)
+
+    Gets a page.  Returns a string that is the page gotten.  Size is an integer
+    number of bytes to read from the URL.  Headers and data are dicts as per
+    urllib.request.Request's arguments."""
+    (target, text) = getUrlTargetAndContent(*args, **kwargs)
     return text
+
+def getUrl(*args, **kwargs):
+    """Alias for getUrlContent."""
+    return getUrlContent(*args, **kwargs)
 
 def getDomain(url):
     return urlparse(url)[1]
@@ -206,39 +222,46 @@ class HtmlToText(HTMLParser, object):
     """Taken from some eff-bot code on c.l.p."""
     entitydefs = entitydefs.copy()
     entitydefs['nbsp'] = ' '
+    entitydefs['apos'] = '\''
     def __init__(self, tagReplace=' '):
         self.data = []
         self.tagReplace = tagReplace
         super(HtmlToText, self).__init__()
 
+    def append(self, data):
+        self.data.append(data)
+
     def handle_starttag(self, tag, attr):
-        self.data.append(self.tagReplace)
+        self.append(self.tagReplace)
 
     def handle_endtag(self, tag):
-        self.data.append(self.tagReplace)
+        self.append(self.tagReplace)
 
     def handle_data(self, data):
-        self.data.append(data)
+        self.append(data)
 
     def handle_entityref(self, data):
         if minisix.PY3:
             if data in name2codepoint:
-                self.data.append(chr(name2codepoint[data]))
+                self.append(chr(name2codepoint[data]))
             elif isinstance(data, bytes):
-                self.data.append(data.decode())
+                self.append(data.decode())
             else:
-                self.data.append(data)
+                self.append(data)
         else:
             if data in name2codepoint:
-                self.data.append(unichr(name2codepoint[data]))
+                self.append(unichr(name2codepoint[data]))
             elif isinstance(data, str):
-                self.data.append(data.decode('utf8', errors='replace'))
+                self.append(data.decode('utf8', errors='replace'))
             else:
-                self.data.append(data)
+                self.append(data)
 
     def getText(self):
         text = ''.join(self.data).strip()
         return normalizeWhitespace(text)
+
+    def handle_charref(self, name):
+        self.append((unichr if minisix.PY2 else chr)(int(name)))
 
 def htmlToText(s, tagReplace=' '):
     """Turns HTML into text.  tagReplace is a string to replace HTML tags with.
@@ -254,6 +277,7 @@ def htmlToText(s, tagReplace=' '):
             pass
     x = HtmlToText(tagReplace)
     x.feed(s)
+    x.close()
     return x.getText()
 
 def mungeEmail(s):

@@ -33,10 +33,13 @@
 import os
 import sys
 import time
+import warnings
 import datetime
 import tempfile
 import subprocess
 from math import ceil
+
+warnings.filterwarnings('always', category=DeprecationWarning)
 
 debug = '--debug' in sys.argv
 
@@ -46,6 +49,7 @@ if debug:
 if path:
     os.chdir(path)
 
+VERSION_FILE = os.path.join('src', 'version.py')
 version = None
 try:
     proc = subprocess.Popen('git show HEAD --format=%ci', shell=True,
@@ -65,19 +69,24 @@ try:
         utc_date = date - offset
         version = utc_date.strftime('%Y.%m.%d')
 except:
-    pass
-if not version:
-    from time import gmtime, strftime
-    version = 'installed on ' + strftime("%Y-%m-%dT%H-%M-%S", gmtime())
+    if os.path.isfile(VERSION_FILE):
+        from src.version import version
+    else:
+        from time import gmtime, strftime
+        version = 'installed on ' + strftime("%Y-%m-%dT%H-%M-%S", gmtime())
 try:
-    os.unlink(os.path.join('src', 'version.py'))
+    os.unlink(VERSION_FILE)
 except OSError: # Does not exist
     pass
-fd = open(os.path.join('src', 'version.py'), 'a')
-fd.write('import supybot.utils.python\n')
-fd.write("version = '0.83.4.1+limnoria %s'\n" % version)
-fd.write('supybot.utils.python._debug_software_version = version\n')
-fd.close()
+if version:
+    fd = open(os.path.join('src', 'version.py'), 'a')
+    fd.write("version = '%s'\n" % version)
+    fd.write('try: # For import from setup.py\n')
+    fd.write('    import supybot.utils.python\n')
+    fd.write('    supybot.utils.python._debug_software_version = version\n')
+    fd.write('except ImportError:\n')
+    fd.write('    pass\n')
+    fd.close()
 
 if sys.version_info < (2, 6, 0):
     sys.stderr.write("Supybot requires Python 2.6 or newer.")
@@ -180,13 +189,12 @@ setup(
     granularity.  Batteries are included in the form of numerous plugins
     already written."""),
     classifiers = [
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
         'Environment :: Console',
         'Environment :: No Input/Output (Daemon)',
         'Intended Audience :: End Users/Desktop',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: BSD License',
-        'Topic :: Communications :: Chat :: Internet Relay Chat',
         'Natural Language :: English',
         'Natural Language :: Finnish',
         'Natural Language :: French',
@@ -200,6 +208,9 @@ setup(
         'Programming Language :: Python :: 3.2',
         'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Topic :: Communications :: Chat :: Internet Relay Chat',
+        'Topic :: Software Development :: Libraries :: Python Modules',
         ],
 
     # Installation data
@@ -228,11 +239,19 @@ setup(
 
     )
 
-if sys.version_info < (2, 7, 0):
-    sys.stderr.write('+-----------------------------------------------+\n')
-    sys.stderr.write('| Running Limnoria on Python 2.6 is deprecated. |\n')
-    sys.stderr.write('| Please consider upgrading to Python 3.x (or   |\n')
-    sys.stderr.write('| at least 2.7)                                 |\n')
-    sys.stderr.write('+-----------------------------------------------+\n')
+if sys.version_info < (2, 7, 9):
+    warnings.warn('Running Limnoria on Python older than 2.7.9 is not '
+            'recommended because it does not support SSL '
+            'certificate verification. For more informations, see: '
+            '<http://doc.supybot.aperio.fr/en/latest/use/security.html#ssl-python-versions>',
+            DeprecationWarning)
+elif sys.version_info < (3, 0):
+    pass # fine, for the moment
+elif sys.version_info < (3, 4):
+    warnings.warn('Running Limnoria on Python 3.2 or 3.3 is not '
+            'recommended because these versions do not support SSL '
+            'certificate verification. For more informations, see: '
+            '<http://doc.supybot.aperio.fr/en/latest/use/security.html#ssl-python-versions>',
+            DeprecationWarning)
 
 # vim:set shiftwidth=4 softtabstop=4 expandtab textwidth=79:

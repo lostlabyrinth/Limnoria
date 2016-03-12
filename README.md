@@ -17,7 +17,7 @@ Master branch: [![Build Status (master branch)](https://travis-ci.org/ProgVal/Li
 Testing branch: [![Build Status (testing branch)](https://travis-ci.org/ProgVal/Limnoria.png?branch=testing)](https://travis-ci.org/ProgVal/Limnoria)
 
 Limnoria supports CPython 2.6, 2.7, 3.2, 3.3, 3.4, 3.5, nightly;
-and Pypy 2 and 3. It works best with CPython 3.3 and higher.
+and Pypy 2 and 3. It works best with CPython 3.4 and higher.
 Python 2.5 and older versions are not supported.
 
 # Support
@@ -28,29 +28,31 @@ If this is your first install, there is an [install guide](http://doc.supybot.ap
 You will probably be pointed to it if you ask on IRC how to install
 Limnoria.
 
-There is extensive documentation at [supybot.aperio.fr] and at
+There is extensive documentation at [doc.supybot.aperio.fr] and at
 [Gribble wiki]. We took the time to write it; you should take the time to
 read it.
 
 ## Installing from cloned repo
 
-*If you haven't cloned this repository, please see the previous two
+*If you don't want to clone the repo, please see the previous two
 paragraphs for easier installation methods.*
 
 ```
+git clone https://github.com/ProgVal/Limnoria.git
 sudo pip install -r requirements.txt
-sudo python setup.py install --user
+sudo python setup.py install
 ```
 
 alternatively without root
 
 ```
+git clone https://github.com/ProgVal/Limnoria.git
 pip install -r requirements.txt --user
 python setup.py install --user
 ```
 
-[supybot.aperio.fr]:http://doc.supybot.aperio.fr/
-[Gribble wiki]:https://sourceforge.net/apps/mediawiki/gribble/index.php?title=Main_Page
+[doc.supybot.aperio.fr]:http://doc.supybot.aperio.fr/
+[Gribble wiki]:https://sourceforge.net/p/gribble/wiki/Main_Page/
 
 ## IRC channels
 

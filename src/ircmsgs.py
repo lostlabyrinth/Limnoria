@@ -37,6 +37,7 @@ object (which, as you'll read later, is quite...full-featured :))
 
 import re
 import time
+import base64
 import datetime
 import functools
 
@@ -186,6 +187,7 @@ class IrcMsg(object):
                 assert all(ircutils.isValidArgument, args), args
                 self.args = args
                 self.time = None
+                self.server_tags = {}
         self.args = tuple(self.args)
         if isUserHostmask(self.prefix):
             (self.nick,self.user,self.host)=ircutils.splitHostmask(self.prefix)
@@ -868,7 +870,8 @@ def ison(nick, prefix='', msg=None):
 
 def monitor(subcommand, nicks=None, prefix='', msg=None):
     if conf.supybot.protocols.irc.strictRfc():
-        assert isNick(nick), repr(nick)
+        for nick in nicks:
+            assert isNick(nick), repr(nick)
         assert subcommand in '+-CLS'
         if subcommand in 'CLS':
             assert nicks is None
@@ -878,6 +881,7 @@ def monitor(subcommand, nicks=None, prefix='', msg=None):
         nicks = ','.join(nicks)
     return IrcMsg(prefix=prefix, command='MONITOR', args=(subcommand, nicks),
             msg=msg)
+
 
 def error(s, msg=None):
     return IrcMsg(command='ERROR', args=(s,), msg=msg)

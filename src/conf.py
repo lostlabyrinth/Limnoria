@@ -210,7 +210,7 @@ class VersionIfEmpty(registry.String):
     def __call__(self):
         ret = registry.String.__call__(self)
         if not ret:
-            ret = 'Supybot %s' % version
+            ret = 'Limnoria %s' % version
         return ret
 
 registerGlobalValue(supybot, 'user',
@@ -300,7 +300,13 @@ class SpaceSeparatedSetOfChannels(registry.SpaceSeparatedListOf):
             # Let's be explicit about it
             return None
 
-def registerNetwork(name, password='', ssl=False, sasl_username='',
+class ValidSaslMechanism(registry.OnlySomeStrings):
+    validStrings = ('ecdsa-nist256p-challenge', 'external', 'plain')
+
+class SpaceSeparatedListOfSaslMechanisms(registry.SpaceSeparatedListOf):
+    Value = ValidSaslMechanism
+
+def registerNetwork(name, password='', ssl=True, sasl_username='',
         sasl_password=''):
     network = registerGroup(supybot.networks, name)
     registerGlobalValue(network, 'password', registry.String(password,
@@ -314,9 +320,23 @@ def registerNetwork(name, password='', ssl=False, sasl_username='',
     registerGlobalValue(network, 'channels', SpaceSeparatedSetOfChannels([],
         _("""Space-separated list of channels the bot will join only on %s.""")
         % name, private=True))
+
     registerGlobalValue(network, 'ssl', registry.Boolean(ssl,
         _("""Determines whether the bot will attempt to connect with SSL
         sockets to %s.""") % name))
+    registerGlobalValue(network.ssl, 'serverFingerprints',
+        registry.SpaceSeparatedSetOfStrings([], _("""Space-separated list
+        of fingerprints of trusted certificates for this network.
+        If non-empty, Certification Authority signatures will not be used to
+        verify certificates.""")))
+    registerGlobalValue(network.ssl, 'authorityCertificate',
+        registry.String('', _("""A certificate that is trusted to verify
+        certificates of this network (aka. Certificate Authority).""")))
+    registerGlobalValue(network, 'requireStarttls', registry.Boolean(False,
+        _("""Determines whether the bot will connect in plain text to %s
+        but require STARTTLS before authentication. This is ignored if the
+        connection already uses SSL.""") % name))
+
     registerGlobalValue(network, 'certfile', registry.String('',
         _("""Determines what certificate file (if any) the bot will use to
         connect with SSL sockets to %s.""") % name))
@@ -348,6 +368,9 @@ def registerNetwork(name, password='', ssl=False, sasl_username='',
         _("""Determines what SASL ECDSA key (if any) will be used on %s.
         The public key must be registered with NickServ for SASL
         ECDSA-NIST256P-CHALLENGE to work.""") % name, private=False))
+    registerGlobalValue(sasl, 'mechanisms', SpaceSeparatedListOfSaslMechanisms(
+        ['ecdsa-nist256p-challenge', 'external', 'plain'], _("""Determines
+        what SASL mechanisms will be tried and in which order.""")))
     registerGlobalValue(network, 'socksproxy', registry.String('',
         _("""If not empty, determines the hostname of the socks proxy that
         will be used to connect to this network.""")))
@@ -456,7 +479,8 @@ registerChannelValue(supybot.reply.error, 'withNotice',
     supybot.reply.errorInPrivate so private errors don't open a query window
     in most IRC clients.""")))
 registerChannelValue(supybot.reply.error, 'noCapability',
-    registry.Boolean(False, _("""Determines whether the bot will send an error
+    registry.Boolean(False, _("""Determines whether the bot will *not* provide
+    details in the error
     message to users who attempt to call a command for which they do not have
     the necessary capability.  You may wish to make this True if you don't want
     users to understand the underlying security system preventing them from
@@ -1148,6 +1172,15 @@ registerGlobalValue(supybot.protocols.http, 'proxy',
     registry.String('', _("""Determines what proxy all HTTP requests should go
     through.  The value should be of the form 'host:port'.""")))
 utils.web.proxy = supybot.protocols.http.proxy
+
+###
+# supybot.protocols.ssl
+###
+registerGroup(supybot.protocols, 'ssl')
+registerGlobalValue(supybot.protocols.ssl, 'verifyCertificates',
+    registry.Boolean(False, _("""Determines whether server certificates
+    will be verified, which checks whether the server certificate is signed
+    by a known certificate authority, and aborts the connection if it is not.""")))
 
 
 ###
