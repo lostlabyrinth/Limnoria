@@ -91,7 +91,7 @@ class Ctcp(callbacks.PluginRegexp):
     def ctcpVersion(self, irc, msg, match):
         "^\x01VERSION\x01$"
         self.log.info('Received CTCP VERSION from %s', msg.prefix)
-        self._reply(irc, msg, 'VERSION Limnoria %s' % conf.version)
+        self._reply(irc, msg, 'VERSION Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36 MystiqueIRCBot' % conf.version)
 
     def ctcpUserinfo(self, irc, msg, match):
         "^\x01USERINFO\x01$"

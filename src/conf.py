@@ -69,7 +69,7 @@ allowDefaultOwner = False
 # Here we replace values in other modules as appropriate.
 ###
 utils.web.defaultHeaders['User-agent'] = \
-                         'Mozilla/5.0 (Compatible; Supybot %s)' % version
+                         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36 MystiqueIRCBot' % version
 
 ###
 # The standard registry.

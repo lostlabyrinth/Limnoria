@@ -114,7 +114,7 @@ def strError(e):
         return str(e)
 
 defaultHeaders = {
-    'User-agent': 'Mozilla/5.0 (compatible; utils.web python module)'
+    'User-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36 MystiqueIRCBot'
     }
 
 # Other modules should feel free to replace this with an appropriate
