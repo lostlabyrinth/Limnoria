@@ -108,6 +108,7 @@ def unWildcardHostmask(hostmask):
 _invert = invertCapability
 class CapabilitySet(set):
     """A subclass of set handling basic capability stuff."""
+    __slots__ = ('__parent',)
     def __init__(self, capabilities=()):
         self.__parent = super(CapabilitySet, self)
         self.__parent.__init__()
@@ -155,6 +156,7 @@ class CapabilitySet(set):
 antiOwner = makeAntiCapability('owner')
 class UserCapabilitySet(CapabilitySet):
     """A subclass of CapabilitySet to handle the owner capability correctly."""
+    __slots__ = ('__parent',)
     def __init__(self, *args, **kwargs):
         self.__parent = super(UserCapabilitySet, self)
         self.__parent.__init__(*args, **kwargs)
@@ -196,6 +198,8 @@ class UserCapabilitySet(CapabilitySet):
 
 class IrcUser(object):
     """This class holds the capabilities and authentications for a user."""
+    __slots__ = ('id', 'auth', 'name', 'ignore', 'secure', 'hashed',
+            'password', 'capabilities', 'hostmasks', 'nicks', 'gpgkeys')
     def __init__(self, ignore=False, password='', name='',
                  capabilities=(), hostmasks=None, nicks=None,
                  secure=False, hashed=False):
@@ -368,6 +372,8 @@ class IrcUser(object):
 
 class IrcChannel(object):
     """This class holds the capabilities, bans, and ignores of a channel."""
+    __slots__ = ('defaultAllow', 'expiredBans', 'bans', 'ignores', 'silences',
+            'exceptions', 'capabilities', 'lobotomized')
     defaultOff = ('op', 'halfop', 'voice', 'protected')
     def __init__(self, bans=None, silences=None, exceptions=None, ignores=None,
                  capabilities=None, lobotomized=False, defaultAllow=True):
@@ -491,10 +497,12 @@ class IrcChannel(object):
 
 
 class Creator(object):
+    __slots__ = ()
     def badCommand(self, command, rest, lineno):
         raise ValueError('Invalid command on line %s: %s' % (lineno, command))
 
 class IrcUserCreator(Creator):
+    __slots__ = ('users')
     u = None
     def __init__(self, users):
         if self.u is None:
@@ -516,15 +524,15 @@ class IrcUserCreator(Creator):
 
     def ignore(self, rest, lineno):
         self._checkId()
-        self.u.ignore = bool(eval(rest))
+        self.u.ignore = bool(utils.gen.safeEval(rest))
 
     def secure(self, rest, lineno):
         self._checkId()
-        self.u.secure = bool(eval(rest))
+        self.u.secure = bool(utils.gen.safeEval(rest))
 
     def hashed(self, rest, lineno):
         self._checkId()
-        self.u.hashed = bool(eval(rest))
+        self.u.hashed = bool(utils.gen.safeEval(rest))
 
     def password(self, rest, lineno):
         self._checkId()
@@ -563,6 +571,7 @@ class IrcUserCreator(Creator):
             IrcUserCreator.u = None
 
 class IrcChannelCreator(Creator):
+    __slots__ = ('c', 'channels', 'hadChannel')
     name = None
     def __init__(self, channels):
         self.c = IrcChannel()
@@ -580,11 +589,11 @@ class IrcChannelCreator(Creator):
 
     def lobotomized(self, rest, lineno):
         self._checkId()
-        self.c.lobotomized = bool(eval(rest))
+        self.c.lobotomized = bool(utils.gen.safeEval(rest))
 
     def defaultallow(self, rest, lineno):
         self._checkId()
-        self.c.defaultAllow = bool(eval(rest))
+        self.c.defaultAllow = bool(utils.gen.safeEval(rest))
 
     def capability(self, rest, lineno):
         self._checkId()
@@ -611,6 +620,8 @@ class DuplicateHostmask(ValueError):
 
 class UsersDictionary(utils.IterableMap):
     """A simple serialized-to-file User Database."""
+    __slots__ = ('noFlush', 'filename', 'users', '_nameCache',
+            '_hostmaskCache')
     def __init__(self):
         self.noFlush = False
         self.filename = None
@@ -775,7 +786,7 @@ class UsersDictionary(utils.IterableMap):
         self.nextId = max(self.nextId, user.id)
         try:
             if self.getUserId(user.name) != user.id:
-                raise DuplicateHostmask(user.name)
+                raise DuplicateHostmask(user.name, user.name)
         except KeyError:
             pass
         for hostmask in user.hostmasks:
@@ -788,10 +799,10 @@ class UsersDictionary(utils.IterableMap):
                     # raise an exception.  So instead, we'll raise an
                     # exception, but be nice and give the offending hostmask
                     # back at the same time.
-                    raise DuplicateHostmask(hostmask)
+                    raise DuplicateHostmask(u.name, hostmask)
                 for otherHostmask in u.hostmasks:
                     if ircutils.hostmaskPatternEqual(hostmask, otherHostmask):
-                        raise DuplicateHostmask(hostmask)
+                        raise DuplicateHostmask(u.name, hostmask)
         self.invalidateCache(user.id)
         self.users[user.id] = user
         if flush:
@@ -821,6 +832,7 @@ class UsersDictionary(utils.IterableMap):
 
 
 class ChannelsDictionary(utils.IterableMap):
+    __slots__ = ('noFlush', 'filename', 'channels')
     def __init__(self):
         self.noFlush = False
         self.filename = None
@@ -897,6 +909,7 @@ class ChannelsDictionary(utils.IterableMap):
 
 
 class IgnoresDB(object):
+    __slots__ = ('filename', 'hostmasks')
     def __init__(self):
         self.filename = None
         self.hostmasks = {}
@@ -1114,8 +1127,11 @@ def checkCapability(hostmask, capability, users=users, channels=channels,
         else:
             return False
     defaultCapabilities = conf.supybot.capabilities()
+    defaultCapabilitiesRegistered = conf.supybot.capabilities.registeredUsers()
     if capability in defaultCapabilities:
         return defaultCapabilities.check(capability)
+    elif capability in defaultCapabilitiesRegistered:
+        return defaultCapabilitiesRegistered.check(capability)
     elif ignoreDefaultAllow:
         return _x(capability, False)
     else:
@@ -1141,8 +1157,12 @@ def checkCapabilities(hostmask, capabilities, requireAll=False):
 # supybot.capabilities
 ###
 
-class DefaultCapabilities(registry.SpaceSeparatedListOfStrings):
+class SpaceSeparatedListOfCapabilities(registry.SpaceSeparatedListOfStrings):
+    __slots__ = ()
     List = CapabilitySet
+
+class DefaultCapabilities(SpaceSeparatedListOfCapabilities):
+    __slots__ = ()
     # We use a keyword argument trick here to prevent eval'ing of code that
     # changes allowDefaultOwner from affecting this.  It's not perfect, but
     # it's still an improvement, raising the bar for potential crackers.
@@ -1163,6 +1183,11 @@ conf.registerGlobalValue(conf.supybot, 'capabilities',
     to override these capabilities.  See docs/CAPABILITIES if you don't
     understand why these default to what they do."""))
 
+conf.registerGlobalValue(conf.supybot.capabilities, 'registeredUsers',
+    SpaceSeparatedListOfCapabilities([], """These are the
+    capabilities that are given to every authenticated user by default.
+    You probably want to use supybot.capabilities instead, to give these
+    capabilities both to registered and non-registered users."""))
 conf.registerGlobalValue(conf.supybot.capabilities, 'default',
     registry.Boolean(True, """Determines whether the bot by default will allow
     users to have a capability.  If this is disabled, a user must explicitly

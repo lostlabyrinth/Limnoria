@@ -142,7 +142,7 @@ class StatsDB(plugins.ChannelUserDB):
             return UserStat(*L)
 
     def addMsg(self, msg, id=None):
-        if ircutils.isChannel(msg.args[0]):
+        if msg.args and ircutils.isChannel(msg.args[0]):
             channel = plugins.getChannel(msg.args[0])
             if (channel, 'channelStats') not in self:
                 self[channel, 'channelStats'] = ChannelStat()
@@ -170,8 +170,6 @@ class ChannelStats(callbacks.Plugin):
     def __init__(self, irc):
         self.__parent = super(ChannelStats, self)
         self.__parent.__init__(irc)
-        self.lastmsg = None
-        self.laststate = None
         self.outFiltering = False
         self.db = StatsDB(filename)
         self._flush = self.db.flush
@@ -183,13 +181,6 @@ class ChannelStats(callbacks.Plugin):
         self.__parent.die()
 
     def __call__(self, irc, msg):
-        try:
-            if self.lastmsg:
-                self.laststate.addMsg(irc, self.lastmsg)
-            else:
-                self.laststate = irc.state.copy()
-        finally:
-            self.lastmsg = msg
         self.db.addMsg(msg)
         super(ChannelStats, self).__call__(irc, msg)
 
@@ -222,15 +213,14 @@ class ChannelStats(callbacks.Plugin):
             id = ircdb.users.getUserId(msg.prefix)
         except KeyError:
             id = None
-        for (channel, c) in self.laststate.channels.items():
-            if msg.nick in c.users:
-                if (channel, 'channelStats') not in self.db:
-                    self.db[channel, 'channelStats'] = ChannelStat()
-                self.db[channel, 'channelStats'].quits += 1
-                if id is not None:
-                    if (channel, id) not in self.db:
-                        self.db[channel, id] = UserStat()
-                    self.db[channel, id].quits += 1
+        for channel in msg.tagged('channels'):
+            if (channel, 'channelStats') not in self.db:
+                self.db[channel, 'channelStats'] = ChannelStat()
+            self.db[channel, 'channelStats'].quits += 1
+            if id is not None:
+                if (channel, id) not in self.db:
+                    self.db[channel, id] = UserStat()
+                self.db[channel, id].quits += 1
 
     def doKick(self, irc, msg):
         (channel, nick, _) = msg.args
@@ -305,6 +295,12 @@ class ChannelStats(callbacks.Plugin):
     _calc_match_forbidden_chars = re.compile('[_[\]]')
     _env = {'__builtins__': types.ModuleType('__builtins__')}
     _env.update(math.__dict__)
+    def _factorial(x):
+        if x<=10000:
+            return math.factorial(x)
+        else:
+            raise Exception('factorial argument too large')
+    _env['factorial'] = _factorial
     @internationalizeDocstring
     def rank(self, irc, msg, args, channel, expr):
         """[<channel>] <stat expression>

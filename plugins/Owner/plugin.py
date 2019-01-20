@@ -33,6 +33,7 @@ import os
 import sys
 import time
 import socket
+import string
 import linecache
 
 import re
@@ -157,17 +158,14 @@ class Owner(callbacks.Plugin):
             conf.supybot.networks.get(network).servers.append(serverS)
             assert conf.supybot.networks.get(network).servers(), \
                    'No servers are set for the %s network.' % network
-        self.log.info('Creating new Irc for %s.', network)
+        self.log.debug('Creating new Irc for %s.', network)
         newIrc = irclib.Irc(network)
-        for irc in world.ircs:
-            if irc != newIrc:
-                newIrc.state.history = irc.state.history
         driver = drivers.newDriver(newIrc)
         self._loadPlugins(newIrc)
         return newIrc
 
     def _loadPlugins(self, irc):
-        self.log.info('Loading plugins (connecting to %s).', irc.network)
+        self.log.debug('Loading plugins (connecting to %s).', irc.network)
         alwaysLoadImportant = conf.supybot.plugins.alwaysLoadImportant()
         important = conf.supybot.commands.defaultPlugins.importantPlugins()
         for (name, value) in conf.supybot.plugins.getValues(fullNames=False):
@@ -282,11 +280,17 @@ class Owner(callbacks.Plugin):
         lobotomized in.
         """
         u = ircdb.users.getUser(msg.prefix)
-        text = 'Announcement from my owner (%s): %s' % (u.name, text)
+
+        template = self.registryValue('announceFormat')
+
+        text = ircutils.standardSubstitute(
+            irc, msg, template, env={'owner': u.name, 'text': text})
+
         for channel in irc.state.channels:
             c = ircdb.channels.getChannel(channel)
             if not c.lobotomized:
                 irc.queueMsg(ircmsgs.privmsg(channel, text))
+
         irc.noReply()
     announce = wrap(announce, ['text'])
 
@@ -495,16 +499,21 @@ class Owner(callbacks.Plugin):
             return
         # Let's do this so even if the plugin isn't currently loaded, it doesn't
         # stay attempting to load.
-        conf.registerPlugin(name, False)
-        callbacks = irc.removeCallback(name)
-        if callbacks:
-            for callback in callbacks:
-                callback.die()
-                del callback
-            gc.collect()
-            irc.replySuccess()
-        else:
-            irc.error('There was no plugin %s.' % name)
+        old_callback = irc.getCallback(name)
+        if old_callback:
+            # Normalize the plugin case to prevent duplicate registration
+            # entries, https://github.com/ProgVal/Limnoria/issues/1295
+            name = old_callback.name()
+            conf.registerPlugin(name, False)
+            callbacks = irc.removeCallback(name)
+            if callbacks:
+                for callback in callbacks:
+                    callback.die()
+                    del callback
+                gc.collect()
+                irc.replySuccess()
+                return
+        irc.error('There was no plugin %s.' % name)
     unload = wrap(unload, ['something'])
 
     def defaultcapability(self, irc, msg, args, action, capability):
@@ -548,7 +557,7 @@ class Owner(callbacks.Plugin):
             if plugin.isCommand(command):
                 pluginCommand = '%s.%s' % (plugin.name(), command)
                 conf.supybot.commands.disabled().add(pluginCommand)
-                plugin._disabled.add(command)
+                plugin._disabled.add(command, plugin.name())
             else:
                 irc.error('%s is not a command in the %s plugin.' %
                           (command, plugin.name()))

@@ -30,6 +30,7 @@
 
 import csv
 import time
+import codecs
 import datetime
 
 import supybot.log as log
@@ -41,6 +42,9 @@ import supybot.ircutils as ircutils
 import supybot.callbacks as callbacks
 from supybot.i18n import PluginInternationalization, internationalizeDocstring
 _ = PluginInternationalization('Later')
+
+class QueueIsFull(Exception):
+    pass
 
 class Later(callbacks.Plugin):
     """Used to do things later; currently, it only allows the sending of
@@ -68,7 +72,7 @@ class Later(callbacks.Plugin):
 
     def _openNotes(self):
         try:
-            fd = open(self.filename)
+            fd = codecs.open(self.filename, encoding='utf8')
         except EnvironmentError as e:
             self.log.warning('Couldn\'t open %s: %s', self.filename, e)
             return
@@ -93,33 +97,15 @@ class Later(callbacks.Plugin):
         try:
             notes = self._notes[nick]
             if maximum and len(notes) >= maximum:
-                raise ValueError
+                raise QueueIsFull()
             else:
                 notes.append((at, whence, text))
         except KeyError:
             self._notes[nick] = [(at, whence, text)]
-        if '?' in nick or '*' in nick and nick not in self.wildcards:
-            self.wildcards.append(nick)
+        if set('?*!@') & set(nick):
+            if nick not in self.wildcards:
+                self.wildcards.append(nick)
         self._flushNotes()
-
-    def _validateNick(self, irc, nick):
-        """Validate nick according to the IRC RFC 2812 spec.
-
-        Reference: http://tools.ietf.org/rfcmarkup?doc=2812#section-2.3.1
-
-        Some irc clients' tab-completion feature appends 'address' characters
-        to nick, such as ':' or ','. We try correcting for that by trimming
-        a char off the end.
-
-        If nick incorrigibly invalid, return False, otherwise,
-        return (possibly trimmed) nick.
-        """
-        if not irc.isNick(nick):
-            if not irc.isNick(nick[:-1]):
-                return False
-            else:
-                return nick[:-1]
-        return nick
 
     def _deleteExpired(self):
         expiry = self.registryValue('messageExpiry')
@@ -156,21 +142,16 @@ class Later(callbacks.Plugin):
         """
         self._deleteExpired()
         validnicks = []
-        for nick in nicks:
+        for nick in set(nicks): # Ignore duplicates
             if ircutils.strEqual(nick, irc.nick):
                 irc.error(_('I can\'t send notes to myself.'))
                 return
-            validnick = self._validateNick(irc, nick)
-            if validnick is False:
-                irc.error(_('%s is an invalid IRC nick. Please check your '
-                    'input.' % nick))
-                return
-            validnicks.append(validnick)
+            validnicks.append(nick)
         full_queues = []
         for validnick in validnicks:
             try:
                 self._addNote(validnick, msg.nick, text)
-            except ValueError:
+            except QueueIsFull:
                 full_queues.append(validnick)
         if full_queues:
             irc.error(format(
@@ -178,7 +159,7 @@ class Later(callbacks.Plugin):
                 full_queues))
         else:
             irc.replySuccess()
-    tell = wrap(tell, [commalist('somethingWithoutSpaces'), 'text'])
+    tell = wrap(tell, [commalist(first('nick', 'hostmask')), 'text'])
 
     @internationalizeDocstring
     def notes(self, irc, msg, args, nick):
@@ -246,7 +227,7 @@ class Later(callbacks.Plugin):
         # Let's try wildcards.
         removals = []
         for wildcard in self.wildcards:
-            if ircutils.hostmaskPatternEqual(wildcard, msg.nick):
+            if ircutils.hostmaskPatternEqual(wildcard, msg.prefix):
                 removals.append(wildcard)
                 notes.extend(self._notes.pop(wildcard))
             for removal in removals:
@@ -259,7 +240,7 @@ class Later(callbacks.Plugin):
                 s = self._formatNote(when, whence, note)
                 irc.reply(s, private=private, prefixNick=not private)
             self._flushNotes()
-            msg.repliedTo = old_repliedto
+            msg.tag('repliedTo', old_repliedto)
 
     def _formatNote(self, when, whence, note):
         return _('Sent %s: <%s> %s') % (self._timestamp(when), whence, note)

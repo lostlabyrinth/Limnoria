@@ -29,12 +29,13 @@
 ###
 
 import supybot.utils as utils
-from supybot.commands import *
 import supybot.plugins as plugins
+import supybot.commands as commands
 import supybot.ircutils as ircutils
 import supybot.callbacks as callbacks
 
 import re
+import collections
 
 try:
     from supybot.i18n import PluginInternationalization
@@ -46,18 +47,17 @@ except:
     _ = lambda x:x
     internationalizeDocstring = lambda x:x
 
-if isinstance(__builtins__, dict):
-    _any = __builtins__['any']
-    _all = __builtins__['all']
-else:
-    _any = __builtins__.any
-    _all = __builtins__.all
+first = commands.first
+many = commands.many
+wrap = commands.wrap
+getopts = commands.getopts
+
+boolean_or_int = first('int', 'boolean')
 
 class Conditional(callbacks.Plugin):
     """This plugin provides logic operators and other commands that
     enable you to run commands only if a condition is true. Useful for nested
     commands and scripting."""
-    threaded = True
     def __init__(self, irc):
         callbacks.Plugin.__init__(self, irc)
 
@@ -83,8 +83,7 @@ class Conditional(callbacks.Plugin):
             self._runCommandFunction(irc, msg, ifcommand)
         else:
             self._runCommandFunction(irc, msg, elsecommand)
-        irc.noReply()
-    cif = wrap(cif, ['boolean', 'something', 'something'])
+    cif = wrap(cif, [boolean_or_int, 'something', 'something'])
 
     @internationalizeDocstring
     def cand(self, irc, msg, args, conds):
@@ -92,11 +91,11 @@ class Conditional(callbacks.Plugin):
 
         Returns true if all conditions supplied evaluate to true.
         """
-        if _all(conds):
+        if all(conds):
             irc.reply("true")
         else:
             irc.reply("false")
-    cand = wrap(cand, [many('boolean'),])
+    cand = wrap(cand, [many(boolean_or_int),])
 
     @internationalizeDocstring
     def cor(self, irc, msg, args, conds):
@@ -104,11 +103,11 @@ class Conditional(callbacks.Plugin):
 
         Returns true if any one of conditions supplied evaluates to true.
         """
-        if _any(conds):
+        if any(conds):
             irc.reply("true")
         else:
             irc.reply("false")
-    cor = wrap(cor, [many('boolean'),])
+    cor = wrap(cor, [many(boolean_or_int),])
 
     @internationalizeDocstring
     def cxor(self, irc, msg, args, conds):
@@ -120,7 +119,7 @@ class Conditional(callbacks.Plugin):
             irc.reply("true")
         else:
             irc.reply("false")
-    cxor = wrap(cxor, [many('boolean'),])
+    cxor = wrap(cxor, [many(boolean_or_int),])
 
     @internationalizeDocstring
     def ceq(self, irc, msg, args, item1, item2):
@@ -297,6 +296,43 @@ class Conditional(callbacks.Plugin):
         else:
             irc.reply('false')
     nle = wrap(nle, ['float', 'float'])
+
+    def cerror(self, irc, msg, args, testcommand):
+        """<testcommand>
+
+        Runs <testcommand> and returns true if it raises an error;
+        false otherwise.
+        """
+        tokens = callbacks.tokenize(testcommand)
+        InvalidCommand = collections.namedtuple('InvalidCommand',
+                'command')
+        replies = []
+        errors = []
+        class ErrorReportingProxy(self.Proxy):
+            def reply(self2, s, *args, **kwargs):
+                replies.append(s)
+            def error(self2, s, Raise=False, *args, **kwargs):
+                errors.append(s)
+                if Raise:
+                    raise ArgumentError
+            def _callInvalidCommands(self2):
+                errors.append(InvalidCommand(self2.args))
+            def evalArgs(self2):
+                # We don't want the replies in the nested command to
+                # be stored here.
+                super(ErrorReportingProxy, self2).evalArgs(withClass=self.Proxy)
+
+        try:
+            ErrorReportingProxy(irc.irc, msg, tokens)
+        except callbacks.ArgumentError as e:
+            pass
+        # TODO: do something with the results
+        if errors:
+            irc.reply('true')
+        else:
+            irc.reply('false')
+    cerror = wrap(cerror, ['something'])
+
 Condition = internationalizeDocstring(Conditional)
 
 Class = Conditional

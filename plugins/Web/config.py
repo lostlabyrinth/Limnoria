@@ -52,10 +52,19 @@ conf.registerChannelValue(Web, 'titleSnarfer',
 conf.registerChannelValue(Web, 'snarferReportIOExceptions',
     registry.Boolean(False, _("""Determines whether the bot will notfiy the user
     about network exceptions like hostnotfound, timeout ....""")))
+conf.registerChannelValue(Web, 'snarferShowDomain',
+    registry.Boolean(True, _("""Determines whether domain names should be
+    displayed by the title snarfer.""")))
+conf.registerChannelValue(Web, 'snarfMultipleUrls',
+    registry.Boolean(False, _("""Determines whether the title snarfer will
+    query all URLs in a message, or only the first one.""")))
 conf.registerChannelValue(Web, 'snarferShowTargetDomain',
     registry.Boolean(False, _("""Determines whether the domain name displayed
     by the snarfer will be the original one (posted on IRC) or the target one
     (got after following redirects, if any).""")))
+conf.registerChannelValue(Web, 'snarferPrefix',
+    registry.String(_('Title:'), _("""Determines the string used at before
+    a web page's title.""")))
 conf.registerChannelValue(Web, 'nonSnarfingRegexp',
     registry.Regexp(None, _("""Determines what URLs matching the given regexp
     will not be snarfed.  Give the empty string if you have no URLs that you'd
@@ -69,6 +78,11 @@ conf.registerGlobalValue(Web, 'urlWhitelist',
     from urls in the whitelist, i.e. starting with http://domain/optionalpath/. This will
     apply to all commands that retrieve data from user-supplied URLs,
     including fetch, headers, title, doctype."""))
+
+conf.registerGlobalValue(Web, 'timeout',
+    registry.NonNegativeInteger(5, """Determines the maximum number of
+    seconds the bot will wait for the site to respond, when using a command
+    in this plugin other than 'fetch'. If 0, will use socket.defaulttimeout"""))
 
 conf.registerGroup(Web, 'fetch')
 conf.registerGlobalValue(Web.fetch, 'maximum',

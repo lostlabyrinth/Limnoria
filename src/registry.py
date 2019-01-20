@@ -110,7 +110,7 @@ def open_registry(filename, clear=False):
 
 CONF_FILE_HEADER = """
 ######
-# Althrough it is technically possible to do so, we do not recommend that
+# Although it is technically possible to do so, we do not recommend that
 # you edit this file with a text editor.
 # Whenever possible, do it on IRC using the Config plugin, which
 # checks values you set are valid before writing them to the
@@ -191,8 +191,10 @@ def join(names):
 
 class Group(object):
     """A group; it doesn't hold a value unless handled by a subclass."""
+    __slots__ = ('_help', '_name', '_added', '_children', '_lastModified',
+            '_private', '_supplyDefault', '_orderAlphabetically', '_wasSet')
     def __init__(self, help='', supplyDefault=False,
-                 orderAlphabetically=False, private=False):
+                 orderAlphabetically=True, private=False):
         self._help = utils.str.normalizeWhitespace(help)
         self._name = 'unset'
         self._added = []
@@ -201,17 +203,7 @@ class Group(object):
         self._private = private
         self._supplyDefault = supplyDefault
         self._orderAlphabetically = orderAlphabetically
-        OriginalClass = self.__class__
-        class X(OriginalClass):
-            """This class exists to differentiate those values that have
-            been changed from their default from those that haven't."""
-            def set(self, *args):
-                self.__class__ = OriginalClass
-                self.set(*args)
-            def setValue(self, *args):
-                self.__class__ = OriginalClass
-                self.setValue(*args)
-        self.X = X
+        self._wasSet = True
 
     def __call__(self):
         raise ValueError('Groups have no value.')
@@ -223,7 +215,7 @@ class Group(object):
     def __makeChild(self, attr, s):
         v = self.__class__(self._default, self._help)
         v.set(s)
-        v.__class__ = self.X
+        v._wasSet = False
         v._supplyDefault = False
         v._help = '' # Clear this so it doesn't print a bazillion times.
         self.register(attr, v)
@@ -320,7 +312,7 @@ class Group(object):
         for name in self._added:
             node = self._children[name]
             if hasattr(node, 'value') or hasattr(node, 'help'):
-                if node.__class__ is not self.X:
+                if node._wasSet:
                     L.append((node._name, node))
             if getChildren:
                 L.extend(node.getValues(getChildren, fullNames))
@@ -335,6 +327,8 @@ class _NoValueGiven:
 class Value(Group):
     """Invalid registry value.  If you're getting this message, report it,
     because we forgot to put a proper help string here."""
+    __slots__ = ('__parent', '_default', '_showDefault', '_help', '_callbacks',
+            'value', 'channelValue', '_opSettable')
     def __init__(self, default, help, setDefault=True,
                  showDefault=True, **kwargs):
         self.__parent = super(Value, self)
@@ -372,6 +366,7 @@ class Value(Group):
         """Override this with a function to convert a string to whatever type
         you want, and call self.setValue to set the value."""
         self.setValue(s)
+        self._wasSet = True
 
     def setValue(self, v):
         """Check conditions on the actual value type here.  I.e., if you're a
@@ -383,11 +378,12 @@ class Value(Group):
         self.value = v
         if self._supplyDefault:
             for (name, v) in list(self._children.items()):
-                if v.__class__ is self.X:
+                if not v._wasSet:
                     self.unregister(name)
         # We call the callback once everything is clean
         for callback, args, kwargs in self._callbacks:
             callback(*args, **kwargs)
+        self._wasSet = True
 
     def context(self, value):
         """Return a context manager object, which sets this variable to a
@@ -428,6 +424,7 @@ class Value(Group):
 
 class Boolean(Value):
     """Value must be either True or False (or On or Off)."""
+    __slots__ = ()
     errormsg = _('Value must be either True or False (or On or Off), not %r.')
     def set(self, s):
         try:
@@ -444,6 +441,7 @@ class Boolean(Value):
 
 class Integer(Value):
     """Value must be an integer."""
+    __slots__ = ()
     errormsg = _('Value must be an integer, not %r.')
     def set(self, s):
         try:
@@ -453,6 +451,7 @@ class Integer(Value):
 
 class NonNegativeInteger(Integer):
     """Value must be a non-negative integer."""
+    __slots__ = ()
     errormsg = _('Value must be a non-negative integer, not %r.')
     def setValue(self, v):
         if v < 0:
@@ -461,6 +460,7 @@ class NonNegativeInteger(Integer):
 
 class PositiveInteger(NonNegativeInteger):
     """Value must be positive (non-zero) integer."""
+    __slots__ = ()
     errormsg = _('Value must be positive (non-zero) integer, not %r.')
     def setValue(self, v):
         if not v:
@@ -469,6 +469,7 @@ class PositiveInteger(NonNegativeInteger):
 
 class Float(Value):
     """Value must be a floating-point number."""
+    __slots__ = ()
     errormsg = _('Value must be a floating-point number, not %r.')
     def set(self, s):
         try:
@@ -484,6 +485,7 @@ class Float(Value):
 
 class PositiveFloat(Float):
     """Value must be a floating-point number greater than zero."""
+    __slots__ = ()
     errormsg = _('Value must be a floating-point number greater than zero, '
             'not %r.')
     def setValue(self, v):
@@ -494,6 +496,7 @@ class PositiveFloat(Float):
 
 class Probability(Float):
     """Value must be a floating point number in the range [0, 1]."""
+    __slots__ = ('__parent',)
     errormsg = _('Value must be a floating point number in the range [0, 1], '
             'not %r.')
     def __init__(self, *args, **kwargs):
@@ -508,7 +511,8 @@ class Probability(Float):
 
 class String(Value):
     """Value is not a valid Python string."""
-    errormsg = _('Value is not a valid Python string, not %r.')
+    __slots__ = ()
+    errormsg = _('Value should be a valid Python string, not %r.')
     def set(self, s):
         v = s
         if not v:
@@ -534,6 +538,8 @@ class String(Value):
         return s
 
 class OnlySomeStrings(String):
+    __slots__ = ('__parent', '__dict__') # unfortunately, __dict__ is needed
+                                         # to set __doc__.
     validStrings = ()
     def __init__(self, *args, **kwargs):
         assert self.validStrings, 'There must be some valid strings.  ' \
@@ -566,6 +572,7 @@ class OnlySomeStrings(String):
             self.error(v)
 
 class NormalizedString(String):
+    __slots__ = ('__parent')
     def __init__(self, default, *args, **kwargs):
         default = self.normalize(default)
         self.__parent = super(NormalizedString, self)
@@ -598,6 +605,7 @@ class NormalizedString(String):
         return ret
 
 class StringSurroundedBySpaces(String):
+    __slots__ = ()
     def setValue(self, v):
         if v and v.lstrip() == v:
             v= ' ' + v
@@ -606,6 +614,7 @@ class StringSurroundedBySpaces(String):
         super(StringSurroundedBySpaces, self).setValue(v)
 
 class StringWithSpaceOnRight(String):
+    __slots__ = ()
     def setValue(self, v):
         if v and v.rstrip() == v:
             v += ' '
@@ -613,6 +622,7 @@ class StringWithSpaceOnRight(String):
 
 class Regexp(Value):
     """Value must be a valid regular expression."""
+    __slots__ = ('sr', 'value', '__parent')
     errormsg = _('Value must be a valid regular expression, not %r.')
     def __init__(self, *args, **kwargs):
         kwargs['setDefault'] = False
@@ -652,6 +662,7 @@ class Regexp(Value):
         return self.sr
 
 class SeparatedListOf(Value):
+    __slots__ = ()
     List = list
     Value = Value
     sorted = False
@@ -688,23 +699,28 @@ class SeparatedListOf(Value):
             return ' '
 
 class SpaceSeparatedListOf(SeparatedListOf):
+    __slots__ = ()
     def splitter(self, s):
         return s.split()
     joiner = ' '.join
 
 class SpaceSeparatedListOfStrings(SpaceSeparatedListOf):
+    __slots__ = ()
     Value = String
 
 class SpaceSeparatedSetOfStrings(SpaceSeparatedListOfStrings):
+    __slots__ = ()
     List = set
 
 class CommaSeparatedListOfStrings(SeparatedListOf):
+    __slots__ = ()
     Value = String
     def splitter(self, s):
         return re.split(r'\s*,\s*', s)
     joiner = ', '.join
 
 class CommaSeparatedSetOfStrings(SeparatedListOf):
+    __slots__ = ()
     List = set
     Value = String
     def splitter(self, s):
@@ -712,6 +728,7 @@ class CommaSeparatedSetOfStrings(SeparatedListOf):
     joiner = ', '.join
 
 class TemplatedString(String):
+    __slots__ = ()
     requiredTemplates = []
     def __init__(self, *args, **kwargs):
         assert self.requiredTemplates, \
@@ -728,6 +745,7 @@ class TemplatedString(String):
             self.error(v)
 
 class Json(String):
+    __slots__ = ()
     # Json-serializable data
     def set(self, v):
         self.setValue(json.loads(v))

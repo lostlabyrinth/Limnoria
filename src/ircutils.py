@@ -90,8 +90,8 @@ def splitHostmask(hostmask):
     """hostmask => (nick, user, host)
     Returns the nick, user, host of a user hostmask."""
     assert isUserHostmask(hostmask)
-    nick, rest = hostmask.split('!', 1)
-    user, host = rest.split('@', 1)
+    nick, rest = hostmask.rsplit('!', 1)
+    user, host = rest.rsplit('@', 1)
     return (minisix.intern(nick), minisix.intern(user), minisix.intern(host))
 
 def joinHostmask(nick, ident, host):
@@ -254,9 +254,9 @@ def separateModes(args):
     if not args:
         return []
     modes = args[0]
-    assert modes[0] in '+-', 'Invalid args: %r' % args
     args = list(args[1:])
     ret = []
+    last = '+'
     for c in modes:
         if c in '+-':
             last = c
@@ -375,7 +375,7 @@ def stripReverse(s):
 
 def stripUnderline(s):
     """Returns the string s, with underlining removed."""
-    return s.replace('\x1f', '').replace('\x1F', '')
+    return s.replace('\x1f', '')
 
 def stripFormatting(s):
     """Returns the string s, with all formatting removed."""
@@ -385,7 +385,7 @@ def stripFormatting(s):
     s = stripReverse(s)
     s = stripUnderline(s)
     s = stripItalic(s)
-    return s.replace('\x0f', '').replace('\x0F', '')
+    return s.replace('\x0f', '')
 
 _containsFormattingRe = re.compile(r'[\x02\x03\x16\x1f]')
 def formatWhois(irc, replies, caller='', channel='', command='whois'):
@@ -596,12 +596,9 @@ class FormatParser(object):
         else:
             self.ungetChar(c)
 
-def wrap(s, length, break_on_hyphens = False, break_long_words = False):
+def wrap(s, length, break_on_hyphens = False):
     processed = []
-    wrapper = textwrap.TextWrapper(width=length)
-    wrapper.break_long_words = break_long_words
-    wrapper.break_on_hyphens = break_on_hyphens
-    chunks = wrapper.wrap(s)
+    chunks = utils.str.byteTextWrap(s, length)
     context = None
     for chunk in chunks:
         if context is not None:
@@ -819,11 +816,12 @@ def standardSubstitute(irc, msg, text, env=None):
         'm': localtime[4], 'min': localtime[4], 'minute': localtime[4],
         's': localtime[5], 'sec': localtime[5], 'second': localtime[5],
         'tz': time.strftime('%Z', localtime),
-        'version': 'Supybot %s' % version,
+        'version': version,
         })
     if irc:
         vars.update({
             'botnick': irc.nick,
+            'network': irc.network,
             })
 
     if msg:

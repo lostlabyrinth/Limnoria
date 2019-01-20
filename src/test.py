@@ -59,6 +59,7 @@ class verbosity:
 
 i18n.import_conf()
 network = True
+setuid = True
 
 # This is the global list of suites that are to be run.
 suites = []
@@ -290,7 +291,7 @@ class PluginTestCase(SupyTestCase):
         fed = time.time()
         response = self.irc.takeMsg()
         while response is None and time.time() - fed < timeout:
-            time.sleep(0.1) # So it doesn't suck up 100% cpu.
+            time.sleep(0.01) # So it doesn't suck up 100% cpu.
             drivers.run()
             response = self.irc.takeMsg()
         if self.myVerbose >= verbosity.MESSAGES:

@@ -37,7 +37,6 @@ import warnings
 import datetime
 import tempfile
 import subprocess
-from math import ceil
 
 warnings.filterwarnings('always', category=DeprecationWarning)
 
@@ -52,28 +51,22 @@ if path:
 VERSION_FILE = os.path.join('src', 'version.py')
 version = None
 try:
-    proc = subprocess.Popen('git show HEAD --format=%ci', shell=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    date = proc.stdout.readline()
-    if sys.version_info[0] >= 3:
-        date = date.decode()
-        date = time.strptime(date.strip(), '%Y-%m-%d %H:%M:%S %z')
-        utc_date = time.gmtime(time.mktime(date))
-        version = time.strftime('%Y.%m.%d', utc_date)
+    if 'SOURCE_DATE_EPOCH' in os.environ:
+        date = int(os.environ['SOURCE_DATE_EPOCH'])
     else:
-        (date, timezone) = date.strip().rsplit(' ', 1)
-        date = datetime.datetime.strptime(date.strip(), '%Y-%m-%d %H:%M:%S')
-        offset = time.strptime(timezone[1:], '%H%M')
-        offset = datetime.timedelta(hours=offset.tm_hour,
-                                    minutes=offset.tm_min)
-        utc_date = date - offset
-        version = utc_date.strftime('%Y.%m.%d')
+        proc = subprocess.Popen('git show HEAD --format=%ct', shell=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        date = proc.stdout.readline()
+        if sys.version_info[0] >= 3:
+            date = date.decode()
+        date = int(date.strip())
+    version = ".".join(str(i).zfill(2) for i in
+            time.strptime(time.asctime(time.gmtime(date)))[:3])
 except:
     if os.path.isfile(VERSION_FILE):
         from src.version import version
     else:
-        from time import gmtime, strftime
-        version = 'installed on ' + strftime("%Y-%m-%dT%H-%M-%S", gmtime())
+        version = 'installed on ' + time.strftime("%Y-%m-%dT%H-%M-%S", time.gmtime())
 try:
     os.unlink(VERSION_FILE)
 except OSError: # Does not exist
@@ -180,7 +173,7 @@ setup(
     author='Valentin Lorentz',
     url='https://github.com/ProgVal/Limnoria',
     author_email='progval+limnoria@progval.net',
-    download_url='http://builds.progval.net/limnoria/',
+    download_url='https://pypi.python.org/pypi/limnoria',
     description='A modified version of Supybot (an IRC bot and framework)',
     platforms=['linux', 'linux2', 'win32', 'cygwin', 'darwin'],
     long_description=normalizeWhitespace("""A robust, full-featured Python IRC
@@ -209,6 +202,7 @@ setup(
         'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
         'Topic :: Communications :: Chat :: Internet Relay Chat',
         'Topic :: Software Development :: Libraries :: Python Modules',
         ],

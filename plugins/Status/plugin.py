@@ -78,8 +78,7 @@ class Status(callbacks.Plugin):
         networks = {}
         for Irc in world.ircs:
             networks.setdefault(Irc.network, []).append(Irc.nick)
-        networks = networks.items()
-        networks.sort()
+        networks = sorted(networks.items())
         networks = [format(_('%s as %L'), net, nicks) for (net,nicks) in networks]
         L = [format(_('I am connected to %L.'), networks)]
         if world.profiling:
@@ -160,7 +159,7 @@ class Status(callbacks.Plugin):
                                'running.',
                                (world.threadsSpawned, 'thread'), activeThreads)
         if self.registryValue('cpu.memory', target):
-            mem = 'an unknown amount'
+            mem = None
             pid = os.getpid()
             plat = sys.platform
             try:
@@ -180,8 +179,11 @@ class Status(callbacks.Plugin):
                     mem = int(out.splitlines()[1])
                 elif sys.platform.startswith('netbsd'):
                     mem = int(os.stat('/proc/%s/mem' % pid)[7])
-                response += format(_('  I\'m taking up %S of memory.'),
-                        mem*1024)
+                if mem:
+                    response += format(_('  I\'m taking up %S of memory.'),
+                            mem*1024)
+                else:
+                    response += _('  I\'m taking up an unknown amount of memory.')
             except Exception:
                 self.log.exception('Uncaught exception in cpu.memory:')
         irc.reply(utils.str.normalizeWhitespace(response))

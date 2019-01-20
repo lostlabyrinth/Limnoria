@@ -34,9 +34,15 @@ import time
 import socket
 
 from . import ircutils, registry, utils
+from .utils import minisix
+from .utils.net import isSocketAddress
 from .version import version
 from .i18n import PluginInternationalization
 _ = PluginInternationalization()
+if minisix.PY2:
+    from urllib2 import build_opener, install_opener, ProxyHandler
+else:
+    from urllib.request import build_opener, install_opener, ProxyHandler
 
 ###
 # *** The following variables are affected by command-line options.  They are
@@ -63,7 +69,7 @@ allowDefaultOwner = False
 # Here we replace values in other modules as appropriate.
 ###
 utils.web.defaultHeaders['User-agent'] = \
-                         'Mozilla/5.0 (Linux; U; x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 MystiqueIRCBot'
+                         'Mozilla/5.0 (Compatible; Supybot %s)' % version
 
 ###
 # The standard registry.
@@ -80,9 +86,10 @@ def registerGlobalValue(group, name, value):
     value.channelValue = False
     return group.register(name, value)
 
-def registerChannelValue(group, name, value):
+def registerChannelValue(group, name, value, opSettable=True):
     value._supplyDefault = True
     value.channelValue = True
+    value._opSettable = opSettable
     g = group.register(name, value)
     gname = g._name.lower()
     for name in registry._cache.keys():
@@ -127,6 +134,7 @@ def registerUserValue(group, name, value):
 
 class ValidNick(registry.String):
     """Value must be a valid IRC nick."""
+    __slots__ = ()
     def setValue(self, v):
         if not ircutils.isNick(v):
             self.error()
@@ -135,6 +143,7 @@ class ValidNick(registry.String):
 
 class ValidNickOrEmpty(ValidNick):
     """Value must be a valid IRC nick or empty."""
+    __slots__ = ()
     def setValue(self, v):
         if v != '' and not ircutils.isNick(v):
             self.error()
@@ -142,11 +151,13 @@ class ValidNickOrEmpty(ValidNick):
             registry.String.setValue(self, v)
 
 class ValidNicks(registry.SpaceSeparatedListOf):
+    __slots__ = ()
     Value = ValidNick
 
 class ValidNickAllowingPercentS(ValidNick):
     """Value must be a valid IRC nick, with the possible exception of a %s
     in it."""
+    __slots__ = ()
     def setValue(self, v):
         # If this works, it's a valid nick, aside from the %s.
         try:
@@ -157,10 +168,12 @@ class ValidNickAllowingPercentS(ValidNick):
             self.error()
 
 class ValidNicksAllowingPercentS(ValidNicks):
+    __slots__ = ()
     Value = ValidNickAllowingPercentS
 
 class ValidChannel(registry.String):
     """Value must be a valid IRC channel name."""
+    __slots__ = ('channel',)
     def setValue(self, v):
         self.channel = v
         if ',' in v:
@@ -187,6 +200,7 @@ class ValidChannel(registry.String):
 
 class ValidHostmask(registry.String):
     """Value must be a valid user hostmask."""
+    __slots__ = ()
     def setValue(self, v):
         if not ircutils.isUserHostmask(v):
             self.error()
@@ -206,19 +220,26 @@ registerGlobalValue(supybot, 'ident',
     ValidNick('limnoria', _("""Determines the bot's ident string, if the server
     doesn't provide one by default.""")))
 
+# Although empty version strings are theoretically allowed by the RFC,
+# popular IRCds do not.
+# So, we keep replacing the empty string by the current version for
+# bots which are migrated from Supybot or an old version of Limnoria
+# (whose default value of supybot.user is the empty string).
 class VersionIfEmpty(registry.String):
+    __slots__ = ()
     def __call__(self):
         ret = registry.String.__call__(self)
         if not ret:
-            ret = 'Limnoria %s' % version
+            ret = 'Limnoria $version'
         return ret
 
 registerGlobalValue(supybot, 'user',
-    VersionIfEmpty('', _("""Determines the real name which the bot sends to
+    VersionIfEmpty('Limnoria $version', _("""Determines the real name which the bot sends to
     the server. A standard real name using the current version of the bot
     will be generated if this is left empty.""")))
 
 class Networks(registry.SpaceSeparatedSetOfStrings):
+    __slots__ = ()
     List = ircutils.IrcSet
 
 registerGlobalValue(supybot, 'networks',
@@ -226,6 +247,7 @@ registerGlobalValue(supybot, 'networks',
              orderAlphabetically=True))
 
 class Servers(registry.SpaceSeparatedListOfStrings):
+    __slots__ = ()
     def normalize(self, s):
         if ':' not in s:
             s += ':6667'
@@ -250,6 +272,7 @@ class Servers(registry.SpaceSeparatedListOfStrings):
 
 class SocksProxy(registry.String):
     """Value must be a valid hostname:port string."""
+    __slots__ = ()
     def setValue(self, v):
         # TODO: improve checks
         if ':' not in v:
@@ -261,6 +284,7 @@ class SocksProxy(registry.String):
         super(SocksProxy, self).setValue(v)
 
 class SpaceSeparatedSetOfChannels(registry.SpaceSeparatedListOf):
+    __slots__ = ()
     sorted = True
     List = ircutils.IrcSet
     Value = ValidChannel
@@ -301,9 +325,12 @@ class SpaceSeparatedSetOfChannels(registry.SpaceSeparatedListOf):
             return None
 
 class ValidSaslMechanism(registry.OnlySomeStrings):
-    validStrings = ('ecdsa-nist256p-challenge', 'external', 'plain')
+    __slots__ = ()
+    validStrings = ('ecdsa-nist256p-challenge', 'external', 'plain',
+            'scram-sha-256')
 
 class SpaceSeparatedListOfSaslMechanisms(registry.SpaceSeparatedListOf):
+    __slots__ = ()
     Value = ValidSaslMechanism
 
 def registerNetwork(name, password='', ssl=True, sasl_username='',
@@ -325,17 +352,16 @@ def registerNetwork(name, password='', ssl=True, sasl_username='',
         _("""Determines whether the bot will attempt to connect with SSL
         sockets to %s.""") % name))
     registerGlobalValue(network.ssl, 'serverFingerprints',
-        registry.SpaceSeparatedSetOfStrings([], _("""Space-separated list
+        registry.SpaceSeparatedSetOfStrings([], format(_("""Space-separated list
         of fingerprints of trusted certificates for this network.
+        Supported hash algorithms are: %L.
         If non-empty, Certification Authority signatures will not be used to
-        verify certificates.""")))
+        verify certificates."""), utils.net.FINGERPRINT_ALGORITHMS)))
     registerGlobalValue(network.ssl, 'authorityCertificate',
         registry.String('', _("""A certificate that is trusted to verify
         certificates of this network (aka. Certificate Authority).""")))
     registerGlobalValue(network, 'requireStarttls', registry.Boolean(False,
-        _("""Determines whether the bot will connect in plain text to %s
-        but require STARTTLS before authentication. This is ignored if the
-        connection already uses SSL.""") % name))
+        _("""Deprecated config value, keep it to False.""")))
 
     registerGlobalValue(network, 'certfile', registry.String('',
         _("""Determines what certificate file (if any) the bot will use to
@@ -371,6 +397,9 @@ def registerNetwork(name, password='', ssl=True, sasl_username='',
     registerGlobalValue(sasl, 'mechanisms', SpaceSeparatedListOfSaslMechanisms(
         ['ecdsa-nist256p-challenge', 'external', 'plain'], _("""Determines
         what SASL mechanisms will be tried and in which order.""")))
+    registerGlobalValue(sasl, 'required', registry.Boolean(False,
+        _("""Determines whether the bot will abort the connection if the
+        none of the enabled SASL mechanism succeeded.""")))
     registerGlobalValue(network, 'socksproxy', registry.String('',
         _("""If not empty, determines the hostname of the socks proxy that
         will be used to connect to this network.""")))
@@ -539,6 +568,7 @@ registerChannelValue(supybot.reply, 'showSimpleSyntax',
 
 class ValidPrefixChars(registry.String):
     """Value must contain only ~!@#$%^&*()_-+=[{}]\\|'\";:,<.>/?"""
+    __slots__ = ()
     def setValue(self, v):
         if any([x not in '`~!@#$%^&*()_-+=[{}]\\|\'";:,<.>/?' for x in v]):
             self.error()
@@ -683,6 +713,7 @@ registerGroup(supybot, 'commands')
 
 class ValidQuotes(registry.Value):
     """Value must consist solely of \", ', and ` characters."""
+    __slots__ = ()
     def setValue(self, v):
         if [c for c in v if c not in '"`\'']:
             self.error()
@@ -707,6 +738,7 @@ registerGlobalValue(supybot.commands.nested, 'maximum',
     commands more nested than this.""")))
 
 class ValidBrackets(registry.OnlySomeStrings):
+    __slots__ = ()
     validStrings = ('', '[]', '<>', '{}', '()')
 
 registerChannelValue(supybot.commands.nested, 'brackets',
@@ -734,6 +766,16 @@ registerGlobalValue(supybot.commands.defaultPlugins, 'importantPlugins',
         shouldn't change this if you don't know what you're doing; if you do
         know what you're doing, then also know that this set is
         case-sensitive.""")))
+
+# For this config variable to make sense, it must no be writable via IRC.
+# Make sure it is always blacklisted from the Config plugin.
+registerGlobalValue(supybot.commands, 'allowShell',
+    registry.Boolean(True, _("""Allows this bot's owner user to use commands
+    that grants them shell access. This config variable exists in case you want
+    to prevent MITM from the IRC network itself (vulnerable IRCd or IRCops)
+    from gaining shell access to the bot's server by impersonating the owner.
+    Setting this to False also disables plugins and commands that can be
+    used to indirectly gain shell access.""")))
 
 # supybot.commands.disabled moved to callbacks for canonicalName.
 
@@ -791,6 +833,7 @@ registerGlobalValue(supybot.drivers, 'poll',
     driver should block waiting for input.""")))
 
 class ValidDriverModule(registry.OnlySomeStrings):
+    __slots__ = ()
     validStrings = ('default', 'Socket', 'Twisted')
 
 registerGlobalValue(supybot.drivers, 'module',
@@ -811,6 +854,7 @@ registerGlobalValue(supybot.drivers, 'maxReconnectWait',
 # XXX This shouldn't make directories willy-nilly.  As it is now, if it's
 #     configured, it'll still make the default directories, I think.
 class Directory(registry.String):
+    __slots__ = ()
     def __call__(self):
         # ??? Should we perhaps always return an absolute path here?
         v = super(Directory, self).__call__()
@@ -832,6 +876,7 @@ class Directory(registry.String):
         return os.path.join(myself, filename)
 
 class DataFilename(registry.String):
+    __slots__ = ()
     def __call__(self):
         v = super(DataFilename, self).__call__()
         dataDir = supybot.directories.data()
@@ -842,6 +887,7 @@ class DataFilename(registry.String):
         return v
 
 class DataFilenameDirectory(DataFilename, Directory):
+    __slots__ = ()
     def __call__(self):
         v = DataFilename.__call__(self)
         v = Directory.__call__(self)
@@ -857,6 +903,9 @@ registerGlobalValue(supybot.directories, 'backup',
     Directory('backup', _("""Determines what directory backup data is put
     into. Set it to /dev/null to disable backup (it is a special value,
     so it also works on Windows and systems without /dev/null).""")))
+registerGlobalValue(supybot.directories, 'log',
+    Directory('logs', """Determines what directory the bot will store its
+    logfiles in."""))
 registerGlobalValue(supybot.directories.data, 'tmp',
     DataFilenameDirectory('tmp', _("""Determines what directory temporary files
     are put into.""")))
@@ -864,8 +913,14 @@ registerGlobalValue(supybot.directories.data, 'web',
     DataFilenameDirectory('web', _("""Determines what directory files of the
     web server (templates, custom images, ...) are put into.""")))
 
-utils.file.AtomicFile.default.tmpDir = supybot.directories.data.tmp
-utils.file.AtomicFile.default.backupDir = supybot.directories.backup
+def _update_tmp():
+    utils.file.AtomicFile.default.tmpDir = supybot.directories.data.tmp
+supybot.directories.data.tmp.addCallback(_update_tmp)
+_update_tmp()
+def _update_backup():
+    utils.file.AtomicFile.default.backupDir = supybot.directories.backup
+supybot.directories.backup.addCallback(_update_backup)
+_update_backup()
 
 registerGlobalValue(supybot.directories, 'plugins',
     registry.CommaSeparatedListOfStrings([], _("""Determines what directories
@@ -890,6 +945,7 @@ registerGlobalValue(supybot.plugins, 'alwaysLoadImportant',
 # supybot.databases.  For stuff relating to Supybot's databases (duh!)
 ###
 class Databases(registry.SpaceSeparatedListOfStrings):
+    __slots__ = ()
     def __call__(self):
         v = super(Databases, self).__call__()
         if not v:
@@ -942,6 +998,7 @@ registerGlobalValue(supybot.databases.channels, 'filename',
 # TODO This will need to do more in the future (such as making sure link.allow
 # will let the link occur), but for now let's just leave it as this.
 class ChannelSpecific(registry.Boolean):
+    __slots__ = ()
     def getChannelLink(self, channel):
         channelSpecific = supybot.databases.plugins.channelSpecific
         channels = [channel]
@@ -995,6 +1052,7 @@ registerChannelValue(supybot.databases.plugins.channelSpecific.link, 'allow',
 
 
 class CDB(registry.Boolean):
+    __slots__ = ()
     def connect(self, filename):
         from . import cdb
         basename = os.path.basename(filename)
@@ -1035,6 +1093,7 @@ registerGroup(supybot, 'protocols')
 registerGroup(supybot.protocols, 'irc')
 
 class Banmask(registry.SpaceSeparatedSetOfStrings):
+    __slots__ = ('__parent', '__dict__') # __dict__ is needed to set __doc__
     validStrings = ('exact', 'nick', 'user', 'host')
     def __init__(self, *args, **kwargs):
         assert self.validStrings, 'There must be some valid strings.  ' \
@@ -1127,7 +1186,7 @@ registerGlobalValue(supybot.protocols.irc, 'vhostv6',
 registerGlobalValue(supybot.protocols.irc, 'maxHistoryLength',
     registry.Integer(1000, _("""Determines how many old messages the bot will
     keep around in its history.  Changing this variable will not take effect
-    until the bot is restarted.""")))
+    on a network until it is reconnected.""")))
 
 registerGlobalValue(supybot.protocols.irc, 'throttleTime',
     registry.Float(1.0, _("""A floating point number of seconds to throttle
@@ -1168,8 +1227,26 @@ registerGlobalValue(supybot.protocols.http, 'peekSize',
     similar.  It'll give up after it reads this many bytes, even if it hasn't
     found what it was looking for.""")))
 
+class HttpProxy(registry.String):
+    """Value must be a valid hostname:port string."""
+    __slots__ = ()
+    def setValue(self, v):
+        proxies = {}
+        if v != "":
+            if isSocketAddress(v):
+                proxies = {
+                    'http': v,
+                    'https': v
+                    }
+            else:
+                self.error()
+        proxyHandler = ProxyHandler(proxies)
+        proxyOpenerDirector = build_opener(proxyHandler)
+        install_opener(proxyOpenerDirector)
+        super(HttpProxy, self).setValue(v)
+
 registerGlobalValue(supybot.protocols.http, 'proxy',
-    registry.String('', _("""Determines what proxy all HTTP requests should go
+    HttpProxy('', _("""Determines what HTTP proxy all HTTP requests should go
     through.  The value should be of the form 'host:port'.""")))
 utils.web.proxy = supybot.protocols.http.proxy
 
@@ -1191,21 +1268,26 @@ registerGroup(supybot.servers, 'http')
 
 class IP(registry.String):
     """Value must be a valid IP."""
+    __slots__ = ()
     def setValue(self, v):
         if v and not utils.net.isIP(v):
             self.error()
         else:
             registry.String.setValue(self, v)
 
+class ListOfIPs(registry.SpaceSeparatedListOfStrings):
+    __slots__ = ()
+    Value = IP
+
 registerGlobalValue(supybot.servers.http, 'singleStack',
     registry.Boolean(True, _("""If true, uses IPV6_V6ONLY to disable
     forwaring of IPv4 traffic to IPv6 sockets. On *nix, has the same
     effect as setting kernel variable net.ipv6.bindv6only to 1.""")))
 registerGlobalValue(supybot.servers.http, 'hosts4',
-    IP('0.0.0.0', _("""Space-separated list of IPv4 hosts the HTTP server
+    ListOfIPs(['0.0.0.0'], _("""Space-separated list of IPv4 hosts the HTTP server
     will bind.""")))
 registerGlobalValue(supybot.servers.http, 'hosts6',
-    IP('::0', _("""Space-separated list of IPv6 hosts the HTTP server will
+    ListOfIPs(['::0'], _("""Space-separated list of IPv6 hosts the HTTP server will
     bind.""")))
 registerGlobalValue(supybot.servers.http, 'port',
     registry.Integer(8080, _("""Determines what port the HTTP server will
@@ -1232,11 +1314,16 @@ registerGlobalValue(supybot, 'defaultIgnore',
 registerGlobalValue(supybot, 'externalIP',
    IP('', _("""A string that is the external IP of the bot.  If this is the
    empty string, the bot will attempt to find out its IP dynamically (though
-   sometimes that doesn't work, hence this variable).""")))
+   sometimes that doesn't work, hence this variable). This variable is not used
+   by Limnoria and its built-in plugins: see supybot.protocols.irc.vhost /
+   supybot.protocols.irc.vhost6 to set the IRC bind host, and
+   supybot.servers.http.hosts4 / supybot.servers.http.hosts6 to set the HTTP
+   server bind host.""")))
 
 class SocketTimeout(registry.PositiveInteger):
     """Value must be an integer greater than supybot.drivers.poll and must be
     greater than or equal to 1."""
+    __slots__ = ()
     def setValue(self, v):
         if v < supybot.drivers.poll() or v < 1:
             self.error()

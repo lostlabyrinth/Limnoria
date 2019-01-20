@@ -52,6 +52,16 @@ import supybot.callbacks as callbacks
 from supybot.i18n import PluginInternationalization, internationalizeDocstring
 _ = PluginInternationalization('RSS')
 
+if world.testing:
+    INIT_DELAY = 1
+else:
+    INIT_DELAY = 10
+
+if minisix.PY2:
+    from urllib2 import ProxyHandler
+else:
+    from urllib.request import ProxyHandler
+
 def get_feedName(irc, msg, args, state):
     if ircutils.isChannel(args[0]):
         state.errorInvalid('feed name', args[0], 'must not be channel names.')
@@ -82,7 +92,7 @@ class InvalidFeedUrl(ValueError):
 class Feed:
     __slots__ = ('url', 'name', 'data', 'last_update', 'entries',
             'etag', 'modified', 'initial',
-            'lock', 'announced_entries')
+            'lock', 'announced_entries', 'last_exception')
     def __init__(self, name, url, initial,
             plugin_is_loading=False, announced=None):
         assert name, name
@@ -96,13 +106,14 @@ class Feed:
         self.data = None
         # We don't want to fetch feeds right after the plugin is
         # loaded (the bot could be starting, and thus already busy)
-        self.last_update = time.time() if plugin_is_loading else 0
+        self.last_update = 0
         self.entries = []
         self.etag = None
         self.modified = None
         self.lock = threading.Lock()
         self.announced_entries = announced or \
                 utils.structures.TruncatableSet()
+        self.last_exception = None
 
     def __repr__(self):
         return 'Feed(%r, %r, %b, <bool>, %r)' % \
@@ -167,6 +178,12 @@ class RSS(callbacks.Plugin):
     def __init__(self, irc):
         self.__parent = super(RSS, self)
         self.__parent.__init__(irc)
+
+        if world.starting:
+            self._init_time = time.time() # To delay loading the feeds
+        else:
+            self._init_time = 0
+
         # Scheme: {name: url}
         self.feed_names = callbacks.CanonicalNameDict()
         # Scheme: {url: feed}
@@ -221,7 +238,13 @@ class RSS(callbacks.Plugin):
     def register_feed_config(self, name, url=''):
         self.registryValue('feeds').add(name)
         group = self.registryValue('feeds', value=False)
-        conf.registerGlobalValue(group, name, registry.String(url, ''))
+        conf.registerGlobalValue(group, name,
+                                 registry.String(url, """The URL for the feed
+                                                 %s. Note that because
+                                                 announced lines are cached,
+                                                 you may need to reload this
+                                                 plugin after changing this
+                                                 option.""" % name))
         feed_group = conf.registerGroup(group, name)
         conf.registerChannelValue(feed_group, 'format',
                 registry.String('', _("""Feed-specific format. Defaults to
@@ -235,7 +258,7 @@ class RSS(callbacks.Plugin):
                 particular feed.""")))
 
     def register_feed(self, name, url, initial,
-            plugin_is_loading, announced=[]):
+            plugin_is_loading, announced=None):
         self.feed_names[name] = url
         self.feeds[url] = Feed(name, url, initial,
                 plugin_is_loading, announced)
@@ -289,9 +312,15 @@ class RSS(callbacks.Plugin):
     # Feed fetching
 
     def update_feed(self, feed):
+        handlers = []
+        if utils.web.proxy():
+            handlers.append(ProxyHandler(
+                {'http': utils.force(utils.web.proxy())}))
+            handlers.append(ProxyHandler(
+                {'https': utils.force(utils.web.proxy())}))
         with feed.lock:
             d = feedparser.parse(feed.url, etag=feed.etag,
-                    modified=feed.modified)
+                    modified=feed.modified, handlers=handlers)
             if 'status' not in d or d.status != 304: # Not modified
                 if 'etag' in d:
                     feed.etag = d.etag
@@ -300,19 +329,22 @@ class RSS(callbacks.Plugin):
                 feed.data = d.feed
                 feed.entries = d.entries
                 feed.last_update = time.time()
+                # feedparser will store soft errors in bozo_exception and set
+                # the "bozo" bit to 1 on supported platforms:
+                # https://pythonhosted.org/feedparser/bozo.html
+                # If this error caused us to e.g. not get any entries at all,
+                # it may be helpful to show it as well.
+                if getattr(d, 'bozo', 0) and hasattr(d, 'bozo_exception'):
+                    feed.last_exception = d.bozo_exception
+                else:
+                    feed.last_exception = None
+
             (initial, feed.initial) = (feed.initial, False)
         self.announce_feed(feed, initial)
 
-    def update_feed_in_thread(self, feed):
-        feed.last_update = time.time()
-        t = world.SupyThread(target=self.update_feed,
-                             name=format('Fetching feed %u', feed.url),
-                             args=(feed,))
-        t.setDaemon(True)
-        t.start()
-
     def update_feed_if_needed(self, feed):
-        if self.is_expired(feed):
+        if self.is_expired(feed) and \
+                self._init_time + INIT_DELAY < time.time():
             self.update_feed(feed)
 
     @only_one_at_once
@@ -324,7 +356,7 @@ class RSS(callbacks.Plugin):
         for name in announced_feeds:
             feed = self.get_feed(name)
             if not feed:
-                self.log.warning('Feed %s is announced but does not exist.' %
+                self.log.warning('Feed %s is announced but does not exist.',
                         name)
                 continue
             self.update_feed_if_needed(feed)
@@ -350,19 +382,19 @@ class RSS(callbacks.Plugin):
         new_entries = self.get_new_entries(feed)
 
         order = self.registryValue('sortFeedItems')
-        new_entries = sort_feed_items(new_entries, order)
+        new_entries = sort_feed_items(new_entries, 'newestFirst')
         for irc in world.ircs:
             for channel in irc.state.channels:
                 if feed.name not in self.registryValue('announce', channel):
                     continue
                 if initial:
-                    n = self.registryValue('initialAnnounceHeadlines', channel)
-                    if n:
-                        announced_entries = new_entries[-n:]
-                    else:
-                        announced_entries = []
+                    max_entries = \
+                            self.registryValue('initialAnnounceHeadlines', channel)
                 else:
-                    announced_entries = new_entries
+                    max_entries = \
+                            self.registryValue('maximumAnnounceHeadlines', channel)
+                announced_entries = new_entries[0:max_entries]
+                announced_entries = sort_feed_items(announced_entries, order)
                 for entry in announced_entries:
                     self.announce_entry(irc, channel, feed, entry)
 
@@ -373,12 +405,24 @@ class RSS(callbacks.Plugin):
     def should_send_entry(self, channel, entry):
         whitelist = self.registryValue('keywordWhitelist', channel)
         blacklist = self.registryValue('keywordBlacklist', channel)
+
+        # fix shadowing by "from supybot.commands import *"
+        try:
+            all = __builtins__.all
+            any = __builtins__.any
+        except AttributeError:
+            all = __builtins__['all']
+            any = __builtins__['any']
+
+        title = getattr(entry, 'title', '')
+        description = getattr(entry, 'description', '')
+
         if whitelist:
-            if all(kw not in entry.title and kw not in entry.description
+            if all(kw not in title and kw not in description
                    for kw in whitelist):
                 return False
         if blacklist:
-            if any(kw in entry.title or kw in entry.description
+            if any(kw in title or kw in description
                    for kw in blacklist):
                 return False
         return True
@@ -395,10 +439,10 @@ class RSS(callbacks.Plugin):
             template = self.registryValue(key_name, channel)
         date = entry.get('published_parsed')
         date = utils.str.timestamp(date)
-        s = string.Template(template).safe_substitute(
+        s = string.Template(template).substitute(
+                entry,
                 feed_name=feed.name,
-                date=date,
-                **entry)
+                date=date)
         return self._normalize_entry(s)
 
     def announce_entry(self, irc, channel, feed, entry):
@@ -465,7 +509,8 @@ class RSS(callbacks.Plugin):
             message isn't sent in the channel itself.
             """
             plugin = irc.getCallback('RSS')
-            invalid_feeds = [x for x in feeds if not plugin.get_feed(x)]
+            invalid_feeds = [x for x in feeds if not plugin.get_feed(x)
+                             and not utils.web.urlRe.match(x)]
             if invalid_feeds:
                 irc.error(format(_('These feeds are unknown: %L'),
                     invalid_feeds), Raise=True)
@@ -477,6 +522,10 @@ class RSS(callbacks.Plugin):
             irc.replySuccess()
             for name in feeds:
                 feed = plugin.get_feed(name)
+                if not feed:
+                    plugin.register_feed_config(name, name)
+                    plugin.register_feed(name, name, True, False)
+                    feed = plugin.get_feed(name)
                 plugin.announce_feed(feed, True)
         add = wrap(add, [('checkChannelCapability', 'op'),
                          many(first('url', 'feedName'))])
@@ -517,7 +566,12 @@ class RSS(callbacks.Plugin):
         self.update_feed_if_needed(feed)
         entries = feed.entries
         if not entries:
-            irc.error(_('Couldn\'t get RSS feed.'))
+            s = _('Couldn\'t get RSS feed.')
+            # If we got a soft parsing exception on our last run, show the error.
+            if feed.last_exception is not None:
+                s += _(' Parser error: ')
+                s += str(feed.last_exception)
+            irc.error(s)
             return
         n = n or self.registryValue('defaultNumberOfHeadlines', channel)
         entries = list(filter(lambda e:self.should_send_entry(channel, e),

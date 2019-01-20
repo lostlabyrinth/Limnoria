@@ -165,8 +165,6 @@ class NickAuth(callbacks.Plugin):
         except KeyError:
             return
         user = ircdb.users.getUserFromNick(irc.network, theiraccount)
-        if not user:
-            user = ircdb.users.getUserFromNick(irc.network, theirnick)
         if user:
             try:
                 user.addAuth(prefix)
@@ -177,7 +175,11 @@ class NickAuth(callbacks.Plugin):
             ircdb.users.setUser(user, flush=False)
             irc.reply(_('You are now authenticated as %s.') % user.name)
         else:
-            irc.error(_('No user has this nick on this network.'))
+            irc.error(_('No user claimed the nick %s on this network. '
+                        'If this is you, you should connect with an other '
+                        'method and use the "nickauth nick add" command, '
+                        'or ask the owner of the bot to do it.')
+                       % (theiraccount,))
 
     def doAccount(self, irc, msg):
         account = msg.args[0]
@@ -197,10 +199,11 @@ class NickAuth(callbacks.Plugin):
             self._auth(irc, msg.prefix, account)
 
     def do354(self, irc, msg):
-        if len(msg.args) != 6 or msg.args[1] != '1':
+        if len(msg.args) != 9 or msg.args[1] != '1':
             return
 
-        (__, ___, ident, host, nick, account) = msg.args
+        # irc.nick 1 user ip host nick status account gecos
+        (n, t, ident, ip, host, nick, status, account, gecos) = msg.args
         prefix = '%s!%s@%s' % (nick, ident, host)
         user = ircdb.users.getUserFromNick(irc.network, account)
 
@@ -217,8 +220,8 @@ class NickAuth(callbacks.Plugin):
                 user = None
 
         if user:
-                user.addAuth(prefix)
-                ircdb.users.setUser(user, flush=False)
+            user.addAuth(prefix)
+            ircdb.users.setUser(user, flush=False)
 
 
 Class = NickAuth

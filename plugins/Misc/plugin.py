@@ -80,8 +80,6 @@ class RegexpTimeout(Exception):
 class Misc(callbacks.Plugin):
     """Miscellaneous commands to access Supybot core. This is a core
     Supybot plugin that should not be removed!"""
-    threaded = True
-
     def __init__(self, irc):
         self.__parent = super(Misc, self)
         self.__parent.__init__(irc)
@@ -107,7 +105,7 @@ class Misc(callbacks.Plugin):
         self.invalidCommands.enqueue(msg)
         if self.invalidCommands.len(msg) > maximum and \
            conf.supybot.abuse.flood.command.invalid() and \
-           not ircdb.checkCapability(msg.prefix, 'owner'):
+           not ircdb.checkCapability(msg.prefix, 'trusted'):
             punishment = conf.supybot.abuse.flood.command.invalid.punishment()
             banmask = '*!%s@%s' % (msg.user, msg.host)
             self.log.info('Ignoring %s for %s seconds due to an apparent '
@@ -135,7 +133,7 @@ class Misc(callbacks.Plugin):
             maximum = conf.supybot.abuse.flood.command.invalid.maximum()
             banmasker = conf.supybot.protocols.irc.banmask.makeBanmask
             if self.invalidCommands.len(msg) > maximum and \
-               not ircdb.checkCapability(msg.prefix, 'owner') and \
+               not ircdb.checkCapability(msg.prefix, 'trusted') and \
                msg.prefix != irc.prefix and \
                ircutils.isUserHostmask(msg.prefix):
                 penalty = conf.supybot.abuse.flood.command.invalid.punishment()
@@ -173,9 +171,9 @@ class Misc(callbacks.Plugin):
             if tokens:
                 # echo [] will get us an empty token set, but there's no need
                 # to log this in that case anyway, it being a nested command.
-                self.log.info('Not replying to %s in %s, not a command.' %
-                    (tokens[0], channel
-                    if channel != irc.nick else _('private')))
+                self.log.info('Not replying to %s in %s, not a command.',
+                    tokens[0], channel
+                    if channel != irc.nick else _('private'))
             if irc.nested:
                 bracketConfig = conf.supybot.commands.nested.brackets
                 brackets = conf.get(bracketConfig, channel)
@@ -329,8 +327,31 @@ class Misc(callbacks.Plugin):
 
         Returns the version of the current bot.
         """
-        irc.reply(_('Mozilla/5.0 (Linux; U; x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 MystiqueIRCBot'))
-    version = wrap(version)
+        try:
+            newestUrl = 'https://api.github.com/repos/ProgVal/Limnoria/' + \
+                    'commits/%s'
+            versions = {}
+            for branch in ('master', 'testing'):
+                data = json.loads(utils.web.getUrl(newestUrl % branch)
+                        .decode('utf8'))
+                version = data['commit']['committer']['date']
+                # Strip the last 'Z':
+                version = version.rsplit('T', 1)[0].replace('-', '.')
+                if minisix.PY2 and isinstance(version, unicode):
+                    version = version.encode('utf8')
+                versions[branch] = version
+            newest = _('The newest versions available online are %s.') % \
+                    ', '.join([_('%s (in %s)') % (y,x)
+                               for x,y in versions.items()])
+        except utils.web.Error as e:
+            self.log.info('Couldn\'t get website version: %s', e)
+            newest = _('I couldn\'t fetch the newest version '
+                     'from the Limnoria repository.')
+        s = _('The current (running) version of this Limnoria is %s, '
+              'running on Python %s.  %s') % \
+            (conf.version, sys.version.replace('\n', ' '), newest)
+        irc.reply(s)
+    version = wrap(thread(version))
 
     @internationalizeDocstring
     def source(self, irc, msg, args):
@@ -338,7 +359,7 @@ class Misc(callbacks.Plugin):
 
         Returns a URL saying where to get Limnoria.
         """
-        irc.reply(_('The clouds'))
+        irc.reply(_('My source is at https://github.com/ProgVal/Limnoria'))
     source = wrap(source)
 
     @internationalizeDocstring
@@ -434,7 +455,7 @@ class Misc(callbacks.Plugin):
                     def f1(s, arg):
                         """Since we can't enqueue match objects into the multiprocessing queue,
                         we'll just wrap the function to return bools."""
-                        if arg.search(s) is not None:
+                        if process(arg.search, s, timeout=0.1) is not None:
                             return True
                         else:
                             return False

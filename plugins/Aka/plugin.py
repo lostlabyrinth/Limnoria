@@ -366,7 +366,15 @@ def findBiggestAt(alias):
     else:
         return 0
 
-AkaDB = plugins.DB('Aka', available_db)
+if 'sqlite3' in conf.supybot.databases() and 'sqlite3' in available_db:
+    AkaDB = SQLiteAkaDB
+elif 'sqlalchemy' in conf.supybot.databases() and 'sqlalchemy' in available_db:
+    log.warning('Aka\'s only enabled database engine is SQLAlchemy, which '
+            'is deprecated. Please consider adding \'sqlite3\' to '
+            'supybot.databases (and/or install sqlite3).')
+    AkaDB = SqlAlchemyAkaDB
+else:
+    raise plugins.NoSuitableDatabase(['sqlite3', 'sqlalchemy'])
 
 class Aka(callbacks.Plugin):
     """Aka is the improved version of the Alias plugin. It stores akas outside
@@ -377,7 +385,9 @@ class Aka(callbacks.Plugin):
     def __init__(self, irc):
         self.__parent = super(Aka, self)
         self.__parent.__init__(irc)
-        self._db = AkaDB()
+        # "sqlalchemy" is only for backward compatibility
+        filename = conf.supybot.directories.data.dirize('Aka.sqlalchemy.db')
+        self._db = AkaDB(filename)
 
     def isCommandMethod(self, name):
         args = name.split(' ')
@@ -438,8 +448,13 @@ class Aka(callbacks.Plugin):
             if biggestDollar or biggestAt:
                 args = getArgs(args, required=biggestDollar, optional=biggestAt,
                                 wildcard=wildcard)
-            max_len = conf.supybot.reply.maximumLength()
-            args = list([x[:max_len] for x in args])
+            remaining_len = conf.supybot.reply.maximumLength()
+            for (i, arg) in enumerate(args):
+                if remaining_len < len(arg):
+                    arg = arg[0:remaining_len]
+                    args[i+1:] = []
+                    break
+                remaining_len -= len(arg)
             def regexpReplace(m):
                 idx = int(m.group(1))
                 return args[idx-1]
@@ -458,27 +473,27 @@ class Aka(callbacks.Plugin):
                 assert not biggestAt
                 # Gotta remove the things that have already been subbed in.
                 i = biggestDollar
-                while i:
-                    args.pop(0)
-                    i -= 1
+                args[:] = args[i:]
                 def everythingReplace(tokens):
+                    skip = 0
                     for (i, token) in enumerate(tokens):
+                        if skip:
+                            skip -= 1
+                            continue
                         if isinstance(token, list):
-                            if everythingReplace(token):
-                                return
+                            everythingReplace(token)
                         if token == '$*':
                             tokens[i:i+1] = args
-                            return True
+                            skip = len(args)-1 # do not make replacements in
+                                               # tokens we just added
                         elif '$*' in token:
                             tokens[i] = token.replace('$*', ' '.join(args))
-                            return True
-                    return False
                 everythingReplace(tokens)
             maxNesting = conf.supybot.commands.nested.maximum()
             if maxNesting and irc.nested+1 > maxNesting:
                 irc.error(_('You\'ve attempted more nesting than is '
                       'currently allowed on this bot.'), Raise=True)
-            self.Proxy(irc, msg, tokens)
+            self.Proxy(irc, msg, tokens, nested=irc.nested+1)
         if biggestDollar and (wildcard or biggestAt):
             flexargs = _(' at least')
         else:
@@ -492,8 +507,15 @@ class Aka(callbacks.Plugin):
             lock = ' ' + _('Locked by %s at %s') % (locked_by, locked_at)
         else:
             lock = ''
-        doc = format(_('<an alias,%s %n>\n\nAlias for %q.%s'),
-                    flexargs, (biggestDollar, _('argument')), original, lock)
+        escaped_command = original.replace('\\', '\\\\').replace('"', '\\"')
+        if channel == 'global':
+            doc = format(_('<a global alias,%s %n>\n\nAlias for %q.%s'),
+                        flexargs, (biggestDollar, _('argument')),
+                        escaped_command, lock)
+        else:
+            doc = format(_('<an alias on %s,%s %n>\n\nAlias for %q.%s'),
+                        channel, flexargs, (biggestDollar, _('argument')),
+                        escaped_command, lock)
         f = utils.python.changeFunctionName(f, name, doc)
         return f
 
@@ -510,8 +532,6 @@ class Aka(callbacks.Plugin):
         wildcard = '$*' in alias
         if biggestAt and wildcard:
             raise AkaError(_('Can\'t mix $* and optional args (@1, etc.)'))
-        if alias.count('$*') > 1:
-            raise AkaError(_('There can be only one $* in an alias.'))
         self._db.add_aka(channel, name, alias)
 
     def _remove_aka(self, channel, name, evenIfLocked=False):
@@ -743,12 +763,14 @@ class Aka(callbacks.Plugin):
             if 'keys' in dict(optlist):
                 # Strange, aka_list is a list of one length tuples
                 s = [k[0] for k in aka_list]
+                oneToOne = True
             else:
                 aka_values = [self._db.get_alias(channel, aka) for aka in
                               aka_list]
                 s = ('{0}: "{1}"'.format(ircutils.bold(k), v) for (k, v) in
                     zip(aka_list, aka_values))
-            irc.replies(s)
+                oneToOne = None
+            irc.replies(s, oneToOne=oneToOne)
         else:
             irc.error(_("No Akas found."))
     list = wrap(list, [getopts({'channel': 'channel', 'keys': '', 'locked': '',

@@ -32,6 +32,7 @@ import gc
 import os
 import csv
 import time
+import codecs
 import fnmatch
 import os.path
 import threading
@@ -42,7 +43,7 @@ from ..commands import *
 
 class NoSuitableDatabase(Exception):
     def __init__(self, suitable):
-        self.suitable = suitable
+        self.suitable = list(suitable)
         self.suitable.sort()
 
     def __str__(self):
@@ -195,7 +196,6 @@ class ChannelUserDictionary(collections.MutableMapping):
         for channel, ids in self.channels.items():
             for id_, value in ids.items():
                 yield (channel, id_)
-        raise StopIteration()
 
     def __len__(self):
         return sum([len(x) for x in self.channels])
@@ -221,7 +221,7 @@ class ChannelUserDB(ChannelUserDictionary):
         ChannelUserDictionary.__init__(self)
         self.filename = filename
         try:
-            fd = open(self.filename)
+            fd = codecs.open(self.filename, encoding='utf8')
         except EnvironmentError as e:
             log.warning('Couldn\'t open %s: %s.', self.filename, e)
             return
@@ -250,7 +250,8 @@ class ChannelUserDB(ChannelUserDictionary):
             log.debug('Exception: %s', utils.exnToString(e))
 
     def flush(self):
-        fd = utils.file.AtomicFile(self.filename, makeBackupIfSmaller=False)
+        mode = 'wb' if utils.minisix.PY2 else 'w'
+        fd = utils.file.AtomicFile(self.filename, mode, makeBackupIfSmaller=False)
         writer = csv.writer(fd)
         items = list(self.items())
         if not items:
@@ -404,6 +405,12 @@ class ChannelIdDatabasePlugin(callbacks.Plugin):
             if opt == 'by':
                 predicates.append(lambda r, arg=arg: r.by == arg.id)
             elif opt == 'regexp':
+                if not ircdb.checkCapability(msg.prefix, 'trusted'):
+                    # Limited --regexp to trusted users, because specially
+                    # crafted regexps can freeze the bot. See
+                    # https://github.com/ProgVal/Limnoria/issues/855 for details
+                    irc.errorNoCapability('trusted')
+
                 predicates.append(lambda r: regexp_wrapper(r.text, reobj=arg,
                         timeout=0.1, plugin_name=self.name(), fcn_name='search'))
         if glob:

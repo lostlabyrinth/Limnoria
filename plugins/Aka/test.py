@@ -55,7 +55,15 @@ class FunctionsTest(SupyTestCase):
 
 class AkaChannelTestCase(ChannelPluginTestCase):
     plugins = ('Aka', 'Conditional', 'Filter', 'Math', 'Utilities',
-            'Format', 'Reply')
+            'Format', 'Reply', 'String')
+
+    def testHistsearch(self):
+        self.assertNotError(
+                r'aka add histsearch "last --from [cif true '
+                r'\"echo test\" \"echo test\"] '
+                r'--regexp [concat \"m/$1/\" [re s/g// \"@2\"]]"')
+        self.assertResponse('echo foo', 'foo')
+        self.assertResponse('histsearch .*', '@echo foo')
 
     def testDoesNotOverwriteCommands(self):
         # We don't have dispatcher commands anymore
@@ -66,10 +74,16 @@ class AkaChannelTestCase(ChannelPluginTestCase):
         self.assertError('aka add unlock "echo foo bar baz"')
 
     def testAkaHelp(self):
-        self.assertNotError('aka add slashdot foo')
-        self.assertRegexp('help slashdot', "Alias for .*foo")
+        self.assertNotError(r'aka add slashdot "foo \"bar\" baz"')
+        self.assertRegexp('help slashdot', r'Alias for "foo \\"bar\\" baz".')
         self.assertNotError('aka add nonascii echo éé')
-        self.assertRegexp('help nonascii', "Alias for .*echo éé")
+        self.assertRegexp('help nonascii', r'Alias for "echo éé".')
+
+        self.assertNotError('aka remove slashdot')
+        self.assertNotError('aka add --channel %s slashdot foo' % self.channel)
+        self.assertRegexp('help aka slashdot', "an alias on %s.*Alias for .*foo"
+                % self.channel)
+        self.assertNotError('aka remove --channel %s slashdot' % self.channel)
 
     def testShow(self):
         self.assertNotError('aka add foo bar')
@@ -104,6 +118,17 @@ class AkaChannelTestCase(ChannelPluginTestCase):
         self.assertResponse('spam egg', 'egg')
         self.assertResponse('spam egg bacon', 'egg bacon')
 
+        self.assertNotError('aka add doublespam "echo [echo $* $*]"')
+        self.assertResponse('doublespam egg', 'egg egg')
+        self.assertResponse('doublespam egg bacon', 'egg bacon egg bacon')
+
+    def testExpansionBomb(self):
+        self.assertNotError('aka add bomb "bomb $* $* $* $* $*"')
+        # if the mitigation doesn't work, this test will eat all memory on the
+        # system.
+        self.assertResponse('bomb foo', "Error: You've attempted more nesting "
+                "than is currently allowed on this bot.")
+
     def testChannel(self):
         self.assertNotError('aka add channel echo $channel')
         self.assertResponse('aka channel', self.channel)
@@ -123,6 +148,11 @@ class AkaChannelTestCase(ChannelPluginTestCase):
         self.assertNotError('aka add myrepr "repr @1"')
         self.assertResponse('myrepr foo', '"foo"')
         self.assertResponse('myrepr ""', '""')
+
+    def testRequiredAndOptional(self):
+        self.assertNotError('aka add reqopt "echo req=$1, opt=@1"')
+        self.assertResponse('reqopt foo bar', 'req=foo, opt=bar')
+        self.assertResponse('reqopt foo', 'req=foo, opt=')
 
     def testNoExtraSpaces(self):
         self.assertNotError('aka add foo "action takes $1\'s money"')
@@ -179,8 +209,15 @@ class AkaChannelTestCase(ChannelPluginTestCase):
         self.assertRegexp('fact 50', 'more nesting')
 
     def testDollarStarNesting(self):
-        self.assertNotError('aka add alias aka $*')
-        self.assertNotError('alias add a+ aka add $*')
+        self.assertResponse('aka add alias aka $*', 'The operation succeeded.')
+        self.assertResponse('alias add a+ aka add $*', 'The operation succeeded.')
+        self.assertResponse('a+ spam echo egg', 'The operation succeeded.')
+        self.assertResponse('spam', 'egg')
+
+    def testIgnore(self):
+        self.assertResponse('aka add test ignore', 'The operation succeeded.')
+        self.assertNoResponse('test')
+
 
 class AkaTestCase(PluginTestCase):
     plugins = ('Aka', 'Alias', 'User', 'Utilities')
@@ -193,7 +230,7 @@ class AkaTestCase(PluginTestCase):
         self.assertNotError('register evil_admin foo')
 
         self.assertNotError('aka add slashdot foo')
-        self.assertRegexp('help aka slashdot', "Alias for .*foo")
+        self.assertRegexp('help aka slashdot', "a global alias.*Alias for .*foo")
         self.assertNotRegexp('help aka slashdot', 'Locked by')
         self.assertNotError('aka lock slashdot')
         self.assertRegexp('help aka slashdot', 'Locked by evil_admin')

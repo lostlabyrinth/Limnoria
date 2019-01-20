@@ -35,10 +35,14 @@ import base64
 import collections
 
 try:
-    from ecdsa import SigningKey, BadDigestError
-    ecdsa = True
+    import ecdsa
 except ImportError:
-    ecdsa = False
+    ecdsa = None
+
+try:
+    import pyxmpp2_scram as scram
+except ImportError:
+    scram = None
 
 from . import conf, ircdb, ircmsgs, ircutils, log, utils, world
 from .utils.str import rsplit
@@ -143,7 +147,7 @@ class IrcCallback(IrcCommandDispatcher, log.Firewalled):
 # Basic queue for IRC messages.  It doesn't presently (but should at some
 # later point) reorder messages based on priority or penalty calculations.
 ###
-_high = frozenset(['MODE', 'KICK', 'PONG', 'NICK', 'PASS', 'CAPAB'])
+_high = frozenset(['MODE', 'KICK', 'PONG', 'NICK', 'PASS', 'CAPAB', 'REMOVE'])
 _low = frozenset(['PRIVMSG', 'PING', 'WHO', 'NOTICE', 'JOIN'])
 class IrcMsgQueue(object):
     """Class for a queue of IrcMsgs.  Eventually, it should be smart.
@@ -429,7 +433,7 @@ class IrcState(IrcCommandDispatcher, log.Firewalled):
         Supported user and channel modes are cached"""
         # msg.args = [nick, server, ircd-version, umodes, modes,
         #             modes that require arguments? (non-standard)]
-        self.ircd = msg.args[2]
+        self.ircd = msg.args[2] if len(msg.args) >= 3 else msg.args[1]
         self.supported['umodes'] = frozenset(msg.args[3])
         self.supported['chanmodes'] = frozenset(msg.args[4])
 
@@ -511,10 +515,10 @@ class IrcState(IrcCommandDispatcher, log.Firewalled):
     def do354(self, irc, msg):
         # WHOX reply.
 
-        if len(msg.args) != 6 or msg.args[1] != '1':
+        if len(msg.args) != 9 or msg.args[1] != '1':
             return
-
-        (__, ___, user, host, nick, ___) = msg.args
+        # irc.nick 1 user ip host nick status account gecos
+        (n, t, user, ip, host, nick, status, account, gecos) = msg.args
         hostmask = '%s!%s@%s' % (nick, user, host)
         self.nicksToHostmasks[nick] = hostmask
 
@@ -970,7 +974,8 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
             return getattr(network_config, name)() or \
                 getattr(conf.supybot, name)()
         self.nick = get_value('nick')
-        self.user = get_value('user')
+        # Expand variables like $version in realname.
+        self.user = ircutils.standardSubstitute(self, None, get_value('user'))
         self.ident = get_value('ident')
         self.alternateNicks = conf.supybot.nick.alternates()[:]
         self.password = network_config.password()
@@ -985,6 +990,14 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
         self.capNegociationEnded = False
         self.requireStarttls = not network_config.ssl() and \
                 network_config.requireStarttls()
+        if self.requireStarttls:
+            log.error(('STARTTLS is no longer supported. Set '
+                'supybot.networks.%s.requireStarttls to False '
+                'to disable it, and use supybot.networks.%s.ssl '
+                'instead.') % (self.network, self.network))
+            self.driver.die()
+            self._reallyDie()
+            return
         self.resetSasl()
 
     def resetSasl(self):
@@ -993,6 +1006,7 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
         self.sasl_username = network_config.sasl.username()
         self.sasl_password = network_config.sasl.password()
         self.sasl_ecdsa_key = network_config.sasl.ecdsa_key()
+        self.sasl_scram_state = {'step': 'uninitialized'}
         self.authenticate_decoder = None
         self.sasl_next_mechanisms = []
         self.sasl_current_mechanism = None
@@ -1004,6 +1018,9 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
             elif mechanism == 'external' and (
                     network_config.certfile() or
                     conf.supybot.protocols.irc.certfile()):
+                self.sasl_next_mechanisms.append(mechanism)
+            elif mechanism.startswith('scram-') and scram and \
+                    self.sasl_username and self.sasl_password:
                 self.sasl_next_mechanisms.append(mechanism)
             elif mechanism == 'plain' and \
                     self.sasl_username and self.sasl_password:
@@ -1027,22 +1044,7 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
 
         self.sendMsg(ircmsgs.IrcMsg(command='CAP', args=('LS', '302')))
 
-        if self.requireStarttls:
-            self.sendMsg(ircmsgs.IrcMsg(command='STARTTLS'))
-        else:
-            self.sendAuthenticationMessages()
-
-    def do670(self, irc, msg):
-        """STARTTLS accepted."""
-        log.info('%s: Starting TLS session.', self.network)
-        self.requireStarttls = False
-        self.driver.starttls()
         self.sendAuthenticationMessages()
-    def do691(self, irc, msg):
-        """STARTTLS refused."""
-        log.error('%s: Server refused STARTTLS: %s', self.network, msg.args[0])
-        self.feedMsg(ircmsgs.error('STARTTLS upgrade refused by the server'))
-        self.driver.reconnect()
 
     def sendAuthenticationMessages(self):
         # Notes:
@@ -1079,6 +1081,9 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
             self.sasl_current_mechanism = self.sasl_next_mechanisms.pop(0)
             self.sendMsg(ircmsgs.IrcMsg(command='AUTHENTICATE',
                 args=(self.sasl_current_mechanism.upper(),)))
+        elif conf.supybot.networks.get(self.network).sasl.required():
+            log.error('None of the configured SASL mechanisms succeeded, '
+                    'aborting connection.')
         else:
             self.sasl_current_mechanism = None
             self.endCapabilityNegociation()
@@ -1100,20 +1105,30 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
 
         mechanism = self.sasl_current_mechanism
         if mechanism == 'ecdsa-nist256p-challenge':
-            if string == b'':
-                self.sendSaslString(self.sasl_username.encode('utf-8'))
-                return
+            self.doAuthenticateEcdsa(string)
+        elif mechanism == 'external':
+            self.sendSaslString(b'')
+        elif mechanism.startswith('scram-'):
+            step = self.sasl_scram_state['step']
             try:
-                with open(self.sasl_ecdsa_key) as fd:
-                    private_key = SigningKey.from_pem(fd.read())
-                authstring = private_key.sign(base64.b64decode(msg.args[0].encode()))
-                self.sendSaslString(authstring)
-            except (BadDigestError, OSError, ValueError):
+                if step == 'uninitialized':
+                    log.debug('%s: starting SCRAM.',
+                            self.network)
+                    self.doAuthenticateScramFirst(mechanism)
+                elif step == 'first-sent':
+                    log.debug('%s: received SCRAM challenge.',
+                            self.network)
+                    self.doAuthenticateScramChallenge(string)
+                elif step == 'final-sent':
+                    log.debug('%s: finishing SCRAM.',
+                            self.network)
+                    self.doAuthenticateScramFinish(string)
+                else:
+                    assert False
+            except scram.ScramException:
                 self.sendMsg(ircmsgs.IrcMsg(command='AUTHENTICATE',
                     args=('*',)))
                 self.tryNextSaslMechanism()
-        elif mechanism == 'external':
-            self.sendSaslString(b'')
         elif mechanism == 'plain':
             authstring = b'\0'.join([
                 self.sasl_username.encode('utf-8'),
@@ -1121,6 +1136,59 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
                 self.sasl_password.encode('utf-8'),
             ])
             self.sendSaslString(authstring)
+
+    def doAuthenticateEcdsa(self, string):
+        if string == b'':
+            self.sendSaslString(self.sasl_username.encode('utf-8'))
+            return
+        try:
+            with open(self.sasl_ecdsa_key) as fd:
+                private_key = ecdsa.SigningKey.from_pem(fd.read())
+            authstring = private_key.sign(string)
+            self.sendSaslString(authstring)
+        except (ecdsa.BadDigestError, OSError, ValueError):
+            self.sendMsg(ircmsgs.IrcMsg(command='AUTHENTICATE',
+                args=('*',)))
+            self.tryNextSaslMechanism()
+
+    def doAuthenticateScramFirst(self, mechanism):
+        """Handle sending the client-first message of SCRAM auth."""
+        hash_name = mechanism[len('scram-'):]
+        if hash_name.endswith('-plus'):
+            hash_name = hash_name[:-len('-plus')]
+        hash_name = hash_name.upper()
+        if hash_name not in scram.HASH_FACTORIES:
+            log.debug('%s: SCRAM hash %r not supported, aborting.',
+                    self.network, hash_name)
+            self.tryNextSaslMechanism()
+            return
+        authenticator = scram.SCRAMClientAuthenticator(hash_name,
+                channel_binding=False)
+        self.sasl_scram_state['authenticator'] = authenticator
+        client_first = authenticator.start({
+            'username': self.sasl_username,
+            'password': self.sasl_password,
+            })
+        self.sendSaslString(client_first)
+        self.sasl_scram_state['step'] = 'first-sent'
+
+    def doAuthenticateScramChallenge(self, challenge):
+        client_final = self.sasl_scram_state['authenticator'] \
+                .challenge(challenge)
+        self.sendSaslString(client_final)
+        self.sasl_scram_state['step'] = 'final-sent'
+
+    def doAuthenticateScramFinish(self, data):
+        try:
+            res = self.sasl_scram_state['authenticator'] \
+                    .finish(data)
+        except scram.BadSuccessException as e:
+            log.warning('%s: SASL authentication failed with SCRAM error: %e',
+                    self.network, e)
+            self.tryNextSaslMechanism()
+        else:
+            self.sendSaslString(b'')
+            self.sasl_scram_state['step'] = 'authenticated'
 
     def do903(self, msg):
         log.info('%s: SASL authentication successful', self.network)
@@ -1210,13 +1278,6 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
                 s = self.state.capabilities_ls['sasl']
                 if s is not None:
                     self.filterSaslMechanisms(set(s.split(',')))
-            if 'starttls' not in self.state.capabilities_ls and \
-                    self.requireStarttls:
-                log.error('%s: Server does not support STARTTLS.', self.network)
-                self.feedMsg(ircmsgs.error('STARTTLS upgrade not supported '
-                    'by the server'))
-                self.die()
-                return
             # NOTE: Capabilities are requested in alphabetic order, because
             # sets are unordered, and their "order" is nondeterministic.
             # This is needed for the tests.
@@ -1371,7 +1432,7 @@ class Irc(IrcCommandDispatcher, log.Firewalled):
     def doJoin(self, msg):
         if msg.nick == self.nick:
             channel = msg.args[0]
-            self.queueMsg(ircmsgs.who(channel, args=('%tuhna,1',))) # Ends with 315.
+            self.queueMsg(ircmsgs.who(channel, args=('%tuhnairf,1',))) # Ends with 315.
             self.queueMsg(ircmsgs.mode(channel)) # Ends with 329.
             for channel in msg.args[0].split(','):
                 self.queueMsg(ircmsgs.mode(channel, '+b'))

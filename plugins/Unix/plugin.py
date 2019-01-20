@@ -40,6 +40,7 @@ import struct
 import subprocess
 import shlex
 
+import supybot.conf as conf
 import supybot.utils as utils
 from supybot.commands import *
 import supybot.utils.minisix as minisix
@@ -49,6 +50,11 @@ import supybot.registry as registry
 import supybot.callbacks as callbacks
 from supybot.i18n import PluginInternationalization, internationalizeDocstring
 _ = PluginInternationalization('Unix')
+
+def checkAllowShell(irc):
+    if not conf.supybot.commands.allowShell():
+        irc.error(_('This command is not available, because '
+            'supybot.commands.allowShell is False.'), Raise=True)
 
 _progstats_endline_remover = utils.str.MultipleRemover('\r\n')
 def progstats():
@@ -207,11 +213,11 @@ class Unix(callbacks.Plugin):
             args = [fortuneCmd]
             if self.registryValue('fortune.short', channel):
                 args.append('-s')
-            if self.registryValue('fortune.equal'):
+            if self.registryValue('fortune.equal', channel):
                 args.append('-e')
             if self.registryValue('fortune.offensive', channel):
                 args.append('-a')
-            args.extend(self.registryValue('fortune.files'))
+            args.extend(self.registryValue('fortune.files', channel))
             try:
                 with open(os.devnull) as null:
                     inst = subprocess.Popen(args,
@@ -272,11 +278,14 @@ class Unix(callbacks.Plugin):
 
     def _make_ping(command):
         def f(self, irc, msg, args, optlist, host):
-            """[--c <count>] [--i <interval>] [--t <ttl>] [--W <timeout>] <host or ip>
+            """[--c <count>] [--i <interval>] [--t <ttl>] [--W <timeout>] [--4|--6] <host or ip>
+
             Sends an ICMP echo request to the specified host.
             The arguments correspond with those listed in ping(8). --c is
             limited to 10 packets or less (default is 5). --i is limited to 5
             or less. --W is limited to 10 or less.
+            --4 and --6 can be used if and only if the system has a unified
+            ping command.
             """
             pingCmd = self.registryValue(registry.join([command, 'command']))
             if not pingCmd:
@@ -294,10 +303,11 @@ class Unix(callbacks.Plugin):
                     if opt == 'i' and val >  5: val = 5
                     if opt == 'W' and val > 10: val = 10
                     args.append('-%s' % opt)
-                    args.append(str(val))
+                    if opt not in ('4', '6'):
+                        args.append(str(val))
                 if '-c' not in args:
                     args.append('-c')
-                    args.append('5')
+                    args.append(str(self.registryValue('ping.defaultCount')))
                 args.append(host)
                 try:
                     with open(os.devnull) as null:
@@ -323,7 +333,8 @@ class Unix(callbacks.Plugin):
         f.__name__ = command
         _hostExpr = re.compile(r'^[a-z0-9][a-z0-9\.-]*[a-z0-9]$', re.I)
         return thread(wrap(f, [getopts({'c':'positiveInt','i':'float',
-                                        't':'positiveInt','W':'positiveInt'}),
+                                        't':'positiveInt','W':'positiveInt',
+                                        '4':'', '6':''}),
                            first('ip', ('matches', _hostExpr, 'Invalid hostname'))]))
 
     ping = _make_ping('ping')
@@ -332,7 +343,7 @@ class Unix(callbacks.Plugin):
     def sysuptime(self, irc, msg, args):
         """takes no arguments
 
-        Returns the uptime from the system the bot is runnning on.
+        Returns the uptime from the system the bot is running on.
         """
         uptimeCmd = self.registryValue('sysuptime.command')
         if uptimeCmd:
@@ -361,7 +372,7 @@ class Unix(callbacks.Plugin):
     def sysuname(self, irc, msg, args):
         """takes no arguments
 
-        Returns the uname -a from the system the bot is runnning on.
+        Returns the uname -a from the system the bot is running on.
         """
         unameCmd = self.registryValue('sysuname.command')
         if unameCmd:
@@ -396,6 +407,7 @@ class Unix(callbacks.Plugin):
         you don't run anything that will spamify your channel or that
         will bring your machine to its knees.
         """
+        checkAllowShell(irc)
         self.log.info('Unix: running command "%s" for %s/%s', text, msg.nick,
                       irc.network)
         args = shlex.split(text)
@@ -428,6 +440,7 @@ class Unix(callbacks.Plugin):
         you don't run anything that will spamify your channel or that
         will bring your machine to its knees.
         """
+        checkAllowShell(irc)
         self.log.info('Unix: running command "%s" for %s/%s', text, msg.nick,
                       irc.network)
         try:

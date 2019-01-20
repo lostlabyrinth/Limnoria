@@ -27,17 +27,24 @@
 # POSSIBILITY OF SUCH DAMAGE.
 ###
 
+import sys
 import time
 TIME = time # For later use.
 from datetime import datetime
 
 import supybot.conf as conf
+import supybot.log as log
 import supybot.utils as utils
 from supybot.commands import *
 import supybot.callbacks as callbacks
 from supybot.i18n import PluginInternationalization, internationalizeDocstring
 _ = PluginInternationalization('Time')
 
+try:
+    from ddate.base import DDate as _ddate
+except ImportError:
+    log.debug("Time: the ddate module is not available; disabling that command.")
+    _ddate = None
 
 try:
     from dateutil import parser
@@ -114,7 +121,7 @@ class Time(callbacks.Plugin):
         and see if it will work.
         If the <time string> is not given, defaults to now.
         """
-        if not s:
+        if not s or s == 'now':
             irc.reply(str(int(time.time())))
             return
         if not parse:
@@ -206,7 +213,23 @@ class Time(callbacks.Plugin):
         irc.reply(datetime.now(timezone).strftime(format))
     tztime = wrap(tztime, ['text'])
 
-
+    def ddate(self, irc, msg, args, year=None, month=None, day=None):
+        """[<year> <month> <day>]
+        Returns a the Discordian date today, or an optional different date."""
+        if _ddate is not None:
+            if year is not None and month is not None and day is not None:
+                try:
+                    irc.reply(_ddate(datetime(year=year, month=month, day=day)))
+                except ValueError as e:
+                    irc.error("%s", e)
+            else:
+                irc.reply(_ddate())
+        else:
+            irc.error(format(_("The 'ddate' module is not installed. Use "
+                               "'%s -m pip install --user ddate' or see "
+                               "%u for more information."), sys.executable,
+                               "https://pypi.python.org/pypi/ddate/"))
+    ddate = wrap(ddate, [optional('positiveint'), optional('positiveint'), optional('positiveint')])
 Class = Time
 
 # vim:set shiftwidth=4 softtabstop=4 expandtab textwidth=79:

@@ -133,7 +133,10 @@ class BetterFileHandler(logging.FileHandler):
             try:
                 self.stream.write(msg.encode("utf8"))
             except (UnicodeError, TypeError):
-                self.stream.write(msg.encode("utf8").decode('ascii', 'replace'))
+                try:
+                    self.stream.write(msg.encode("utf8").decode('ascii', 'replace'))
+                except (UnicodeError, TypeError):
+                    self.stream.write(repr(msg))
         self.stream.write(os.linesep)
         try:
             self.flush()
@@ -175,10 +178,6 @@ class ColorizedFormatter(Formatter):
         else:
             return Formatter.format(self, record, *args, **kwargs)
 
-conf.registerGlobalValue(conf.supybot.directories, 'log',
-    conf.Directory('logs', """Determines what directory the bot will store its
-    logfiles in."""))
-
 _logDir = conf.supybot.directories.log()
 if not os.path.exists(_logDir):
     os.mkdir(_logDir, 0o755)
@@ -190,12 +189,12 @@ if not os.path.exists(pluginLogDir):
 
 try:
     messagesLogFilename = os.path.join(_logDir, 'messages.log')
-    _handler = BetterFileHandler(messagesLogFilename)
+    _handler = BetterFileHandler(messagesLogFilename, encoding='utf8')
 except EnvironmentError as e:
     raise SystemExit('Error opening messages logfile (%s).  ' \
           'Generally, this is because you are running Supybot in a directory ' \
           'you don\'t have permissions to add files in, or you\'re running ' \
-          'Supybot as a different user than you normal do.  The original ' \
+          'Supybot as a different user than you normally do.  The original ' \
           'error was: %s' % (messagesLogFilename, utils.gen.exnToString(e)))
 
 # These are public.

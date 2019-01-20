@@ -54,11 +54,21 @@ class GoogleTestCase(ChannelPluginTestCase):
             # Unicode check
             self.assertNotError('google ae')
 
+        def testUrlDecode(self):
+            self.assertRegexp(
+                    'google site:http://www.urbandictionary.com carajo land',
+                    '\x02Urban Dictionary: carajo land\x02: '
+                    'https?://www.urbandictionary.com/define.php\?term=carajo%20land')
+
+        def testLucky(self):
+            self.assertResponse('lucky Hacker News',
+                    'https://news.ycombinator.com/')
+
         def testSearchFormat(self):
-            self.assertRegexp('google foo', '<http://.*>')
+            self.assertRegexp('google foo', '<https?://.*>')
             self.assertNotError('config reply.format.url %s')
-            self.assertRegexp('google foo', 'http://.*')
-            self.assertNotRegexp('google foo', '<http://.*>')
+            self.assertRegexp('google foo', 'https?://.*')
+            self.assertNotRegexp('google foo', '<https?://.*>')
 
         def testSearchOneToOne(self):
             self.assertRegexp('google dupa', ';')

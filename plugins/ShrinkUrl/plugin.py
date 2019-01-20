@@ -124,8 +124,10 @@ class ShrinkUrl(callbacks.PluginRegexp):
         irc.queueMsg(newMsg)
 
     def outFilter(self, irc, msg):
+        if msg.command != 'PRIVMSG':
+            return msg
         channel = msg.args[0]
-        if msg.command == 'PRIVMSG' and irc.isChannel(channel):
+        if irc.isChannel(channel):
             if not msg.shrunken:
                 if self.registryValue('outFilter', channel):
                     if utils.web.httpUrlRe.search(msg.args[1]):
@@ -227,7 +229,7 @@ class ShrinkUrl(callbacks.PluginRegexp):
             irc.error(str(e))
     ur1 = thread(wrap(ur1, ['httpUrl']))
 
-    _x0Api = 'http://api.x0.no/?%s'
+    _x0Api = 'https://x0.no/api/?%s'
     @retry
     def _getX0Url(self, url):
         try:
@@ -253,33 +255,6 @@ class ShrinkUrl(callbacks.PluginRegexp):
         except ShrinkError as e:
             irc.error(str(e))
     x0 = thread(wrap(x0, ['httpUrl']))
-
-    @retry
-    def _getExpandUrl(self, url):
-        url = utils.web.urlquote(url)
-        try:
-            return self.db.get('Expand', url)
-        except KeyError:
-            text = utils.web.getUrl('http://api.longurl.org/v2/expand?url=' + url)
-            text = text.decode()
-            text = text.split('<![CDATA[', 1)[1].split(']]>', 1)[0]
-            self.db.set('Expand', url, text)
-            return text
-
-    @internationalizeDocstring
-    def expand(self, irc, msg, args, url):
-        """<url>
-
-        Returns an expanded version of <url>.
-        """
-        try:
-            expandurl = self._getExpandUrl(url)
-            m = irc.reply(expandurl)
-            if m is not None:
-                m.tag('shrunken')
-        except ShrinkError as e:
-            irc.error(str(e))
-    expand = thread(wrap(expand, ['httpUrl']))
 
 Class = ShrinkUrl
 

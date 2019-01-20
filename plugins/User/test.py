@@ -38,8 +38,9 @@ import supybot.utils as utils
 
 class UserTestCase(PluginTestCase):
     plugins = ('User', 'Admin', 'Config')
-    prefix1 = 'somethingElse!user@host.tld'
-    prefix2 = 'EvensomethingElse!user@host.tld'
+    prefix1 = 'somethingElse!user@host1.tld'
+    prefix2 = 'EvensomethingElse!user@host2.tld'
+    prefix3 = 'Completely!Different@host3.tld__no_testcap__'
 
     def testHostmaskList(self):
         self.assertError('hostmask list')
@@ -59,6 +60,43 @@ class UserTestCase(PluginTestCase):
         self.assertNotError('hostmask remove foo %s' % self.prefix1)
         self.assertNotError('identify foo bar')
         self.assertRegexp('hostmask list', 'no registered hostmasks')
+
+    def testHostmaskOverlap(self):
+        self.assertNotError('register foo passwd', frm=self.prefix1)
+        self.assertNotError('register bar passwd', frm=self.prefix2)
+        self.assertResponse('whoami', 'foo', frm=self.prefix1)
+        self.assertResponse('whoami', 'bar', frm=self.prefix2)
+        self.assertNotError('hostmask add foo *!*@foobar/b',
+                frm=self.prefix1)
+
+        self.assertResponse('hostmask add bar *!*@foobar/*',
+                'Error: That hostmask is already registered to foo.',
+                frm=self.prefix2)
+        self.assertRegexp('hostmask list foo', '\*!\*@foobar/b',
+                frm=self.prefix1)
+        self.assertNotRegexp('hostmask list bar', 'foobar',
+                frm=self.prefix2)
+
+    def testHostmaskOverlapPrivacy(self):
+        self.assertNotError('register foo passwd', frm=self.prefix1)
+        self.assertNotError('register bar passwd', frm=self.prefix3)
+        self.assertResponse('whoami', 'foo', frm=self.prefix1)
+        self.assertResponse('whoami', 'bar', frm=self.prefix3)
+        self.assertNotError('hostmask add foo *!*@foobar/b',
+                frm=self.prefix1)
+
+        ircdb.users.getUser('bar').addCapability('owner')
+        self.assertResponse('whoami', 'bar',
+                frm=self.prefix3)
+        self.assertResponse('capabilities', '[owner]',
+                frm=self.prefix3)
+        self.assertResponse('hostmask add *!*@foobar/*',
+                'Error: That hostmask is already registered to foo.',
+                frm=self.prefix3)
+        ircdb.users.getUser('bar').removeCapability('owner')
+        self.assertResponse('hostmask add *!*@foobar/*',
+                'Error: That hostmask is already registered.',
+                frm=self.prefix3)
 
 
     def testHostmask(self):

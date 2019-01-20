@@ -114,7 +114,7 @@ def strError(e):
         return str(e)
 
 defaultHeaders = {
-    'User-agent': 'Mozilla/5.0 (Linux; U; x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 MystiqueIRCBot'
+    'User-agent': 'Mozilla/5.0 (compatible; utils.web python module)'
     }
 
 # Other modules should feel free to replace this with an appropriate
@@ -143,9 +143,6 @@ def getUrlFd(url, headers=None, data=None, timeout=None):
         else:
             request = url
             request.add_data(data)
-        httpProxy = force(proxy)
-        if httpProxy:
-            request.set_proxy(httpProxy, 'http')
         fd = urlopen(request, timeout=timeout)
         return fd
     except socket.timeout as e:
@@ -261,7 +258,7 @@ class HtmlToText(HTMLParser, object):
         return normalizeWhitespace(text)
 
     def handle_charref(self, name):
-        self.append((unichr if minisix.PY2 else chr)(int(name)))
+        self.append(self.unescape('&#%s;' % name))
 
 def htmlToText(s, tagReplace=' '):
     """Turns HTML into text.  tagReplace is a string to replace HTML tags with.

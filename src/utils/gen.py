@@ -165,20 +165,13 @@ def saltHash(password, salt=None, hash='sha'):
     return '|'.join([salt, hasher((salt + password).encode('utf8')).hexdigest()])
 
 _astStr2 = ast.Str if minisix.PY2 else ast.Bytes
-def safeEval(s, namespace={'True': True, 'False': False, 'None': None}):
+def safeEval(s, namespace=None):
     """Evaluates s, safely.  Useful for turning strings into tuples/lists/etc.
     without unsafely using eval()."""
     try:
-        node = ast.parse(s)
+        node = ast.parse(s, mode='eval').body
     except SyntaxError as e:
         raise ValueError('Invalid string: %s.' % e)
-    nodes = ast.parse(s).body
-    if not nodes:
-        if node.__class__ is ast.Module:
-            return node.doc
-        else:
-            raise ValueError(format('Unsafe string: %q', s))
-    node = nodes[0]
     def checkNode(node):
         if node.__class__ is ast.Expr:
             node = node.value
@@ -193,7 +186,10 @@ def safeEval(s, namespace={'True': True, 'False': False, 'None': None}):
             return all([checkNode(x) for x in node.values]) and \
                     all([checkNode(x) for x in node.values])
         elif node.__class__ is ast.Name:
-            if node.id in namespace:
+            if namespace is None and node.id in ('True', 'False', 'None'):
+                # For Python < 3.4, which does not have NameConstant.
+                return True
+            elif namespace is not None and node.id in namespace:
                 return True
             else:
                 return False
@@ -203,7 +199,12 @@ def safeEval(s, namespace={'True': True, 'False': False, 'None': None}):
         else:
             return False
     if checkNode(node):
-        return eval(s, namespace, namespace)
+        if namespace is None:
+            return eval(s, namespace, namespace)
+        else:
+            # Probably equivalent to eval() because checkNode(node) is True,
+            # but it's an extra security.
+            return ast.literal_eval(node)
     else:
         raise ValueError(format('Unsafe string: %q', s))
 
@@ -219,9 +220,9 @@ class IterableMap(object):
     """Define .items() in a class and subclass this to get the other iters.
     """
     def items(self):
-        if minisix.PY3 and hasattr(self, 'items'):
+        if minisix.PY3 and hasattr(self, 'iteritems'):
             # For old plugins
-            return getattr(self, 'items')() # avoid 2to3
+            return self.iteritems() # avoid 2to3
         else:
             raise NotImplementedError()
     __iter__ = items

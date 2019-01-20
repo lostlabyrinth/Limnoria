@@ -39,6 +39,7 @@ import re
 import time
 import base64
 import datetime
+import warnings
 import functools
 
 from . import conf, ircutils, utils
@@ -262,7 +263,17 @@ class IrcMsg(object):
         return self.tags.get(tag) # Returns None if it's not there.
 
     def __getattr__(self, attr):
-        return self.tagged(attr)
+        if attr.startswith('__'): # Since PEP 487, Python calls __set_name__
+            raise AttributeError("'%s' object has no attribute '%s'" %
+                    (self.__class__.__name__, attr))
+        if attr in self.tags:
+            warnings.warn("msg.<tagname> is deprecated. Use "
+                    "msg.tagged('<tagname>') or msg.tags['<tagname>']"
+                    "instead.", DeprecationWarning)
+            return self.tags[attr]
+        else:
+            # TODO: make this raise AttributeError
+            return None
 
 
 def isCtcp(msg):
@@ -384,7 +395,7 @@ def prettyPrint(msg, addRecipients=False, timestampFormat=None, showNick=True):
         s = '*** %s is now known as %s' % (msg.nick, msg.args[0])
     else:
         s = utils.str.format('--- Unknown command %q', ' '.join(msg.args))
-    at = getattr(msg, 'receivedAt', None)
+    at = msg.tagged('receivedAt')
     if timestampFormat and at:
         s = '%s %s' % (time.strftime(timestampFormat, time.localtime(at)), s)
     return s
@@ -829,7 +840,7 @@ def mode(channel, args=(), prefix='', msg=None):
     return IrcMsg(prefix=prefix, command='MODE', args=(channel,)+args, msg=msg)
 
 def modes(channel, args=(), prefix='', msg=None):
-    """Returns a MODE to quiet each of nicks on channel."""
+    """Returns a MODE message for the channel for all the (mode, targetOrNone) 2-tuples in 'args'."""
     if conf.supybot.protocols.irc.strictRfc():
         assert isChannel(channel), repr(channel)
     modes = args

@@ -54,7 +54,20 @@ import socket
 import logging
 import optparse
 
-import supybot.i18n as i18n
+try:
+    import supybot.i18n as i18n
+except ImportError:
+    sys.stderr.write("""Error:
+    You are running a mix of Limnoria and stock Supybot code. Although you run
+    one of Limnoria\'s executables, Python tries to load stock
+    Supybot\'s library. To fix this issue, uninstall Supybot
+    ("%s -m pip uninstall supybot" should do the job)
+    and install Limnoria again.
+    For your information, Supybot's libraries are installed here:
+    %s\n""" %
+    (sys.executable, '\n    '.join(supybot.__path__)))
+    exit(-1)
+
 import supybot.ansi as ansi
 import supybot.utils as utils
 import supybot.ircutils as ircutils
@@ -171,6 +184,14 @@ def main():
                            'run directly in the HOME directory. '
                            'You should not do this unless you want it to '
                            'create multiple files in your HOME directory.')
+    parser.add_option('', '--allow-bin', action='store_true',
+                      dest='allowBin',
+                      help='Determines whether the wizard will be allowed to '
+                           'run directly in a directory for binaries (eg. '
+                           '/usr/bin, /usr/local/bin, or ~/.local/bin). '
+                           'You should not do this unless you want it to '
+                           'create multiple non-binary files in directory '
+                           'that should only contain binaries.')
     parser.add_option('', '--no-network', action='store_false',
                       dest='network',
                       help='Determines whether the wizard will be allowed to '
@@ -182,6 +203,8 @@ def main():
     if os.name == 'posix':
         if (os.getcwd() == os.path.expanduser('~')) and not options.allowHome:
             error('Please, don\'t run this in your HOME directory.')
+        if (os.path.split(os.getcwd())[-1] == 'bin') and not options.allowBin:
+            error('Please, don\'t run this in a "bin" directory.')
     if os.path.isfile(os.path.join('scripts', 'supybot-wizard')) or \
             os.path.isfile(os.path.join('..', 'scripts', 'supybot-wizard')):
         print('')
@@ -247,11 +270,8 @@ def main():
     i18n.conf = fakeConf
     i18n.currentLocale = language
     i18n.reloadLocales()
-    import supybot.log as log
-    log._stdoutHandler.setLevel(100) # *Nothing* gets through this!
     import supybot.conf as conf
     i18n.import_conf() # It imports the real conf module
-    import supybot.plugin as plugin
 
     ### Directories.
     # We set these variables in cache because otherwise conf and log will
@@ -271,6 +291,8 @@ def main():
         make a directory named "logs" right here.""")
         (logDir, basedir) = getDirectoryName('logs')
         conf.supybot.directories.log.setValue(logDir)
+        import supybot.log as log
+        log._stdoutHandler.setLevel(100) # *Nothing* gets through this!
 
         # conf.supybot.directories.data
         output("""Your bot will need to put various data somewhere.  Things
@@ -297,6 +319,23 @@ def main():
         (backupDir, basedir) = getDirectoryName('backup', basedir=basedir)
         conf.supybot.directories.backup.setValue(backupDir)
 
+        # conf.supybot.directories.data.tmp
+        output("""Your bot needs a directory to put temporary files (used
+        mainly to atomically update its configuration files).""")
+        (tmpDir, basedir) = getDirectoryName('tmp', basedir=basedir)
+        conf.supybot.directories.data.tmp.setValue(tmpDir)
+
+        # conf.supybot.directories.data.web
+        output("""Your bot needs a directory to put files related to the web
+        server (templates, CSS).""")
+        (webDir, basedir) = getDirectoryName('web', basedir=basedir)
+        conf.supybot.directories.data.web.setValue(webDir)
+
+
+        # imports callbacks, which imports ircdb, which requires
+        # directories.conf
+        import supybot.plugin as plugin
+
         # pluginDirs
         output("""Your bot will also need to know where to find its plugins at.
         Of course, it already knows where the plugins that it came with are,
@@ -317,22 +356,33 @@ def main():
         the various log, config, and data files.""")
         basedir = something("""Where would you like to create these
                             directories?""", default=os.curdir)
+
         # conf.supybot.directories.log
         (logDir, basedir) = getDirectoryName('logs',
                                              basedir=basedir, prompt=False)
         conf.supybot.directories.log.setValue(logDir)
+
         # conf.supybot.directories.data
         (dataDir, basedir) = getDirectoryName('data',
                                               basedir=basedir, prompt=False)
         conf.supybot.directories.data.setValue(dataDir)
+        (tmpDir, basedir) = getDirectoryName('tmp',
+                                             basedir=basedir, prompt=False)
+        conf.supybot.directories.data.tmp.setValue(tmpDir)
+        (webDir, basedir) = getDirectoryName('web',
+                                             basedir=basedir, prompt=False)
+        conf.supybot.directories.data.web.setValue(webDir)
+
         # conf.supybot.directories.conf
         (confDir, basedir) = getDirectoryName('conf',
                                               basedir=basedir, prompt=False)
         conf.supybot.directories.conf.setValue(confDir)
+
         # conf.supybot.directories.backup
         (backupDir, basedir) = getDirectoryName('backup',
                                                 basedir=basedir, prompt=False)
         conf.supybot.directories.backup.setValue(backupDir)
+
         # pluginDirs
         pluginDirs = conf.supybot.directories.plugins()
         (pluginDir, _) = getDirectoryName('plugins',
@@ -340,6 +390,10 @@ def main():
         if pluginDir not in pluginDirs:
             pluginDirs.append(pluginDir)
         conf.supybot.directories.plugins.setValue(pluginDirs)
+
+    import supybot.log as log
+    log._stdoutHandler.setLevel(100) # *Nothing* gets through this!
+    import supybot.plugin as plugin
 
     output("Good!  We're done with the directory stuff.")
 
@@ -393,8 +447,8 @@ def main():
     output("""Most networks allow you to use a secure connection via SSL.
     If you are not sure whether this network supports SSL or not, check
     its website.""")
-    if yn('Do you want to use an SSL connection?', default=True):
-        network.ssl.setValue(True)
+    use_ssl = yn('Do you want to use an SSL connection?', default=True)
+    network.ssl.setValue(use_ssl)
 
     output("""IRC servers almost always accept connections on port
     6697 (or 6667 when not using SSL).  They can, however, accept connections
@@ -446,7 +500,7 @@ def main():
         output("""IRC servers also allow you to set your ident, which they
         might need if they can't find your identd server.  What would you like
         your ident to be?  If you don't care, press enter and we'll use
-        'supybot'.  In fact, we prefer that you do this, because it provides
+        'limnoria'.  In fact, we prefer that you do this, because it provides
         free advertising for Supybot when users /whois your bot.  But, of
         course, it's your call.""")
         while True:
@@ -694,6 +748,7 @@ def main():
     conf.registerPlugin('Channel', True)
     conf.registerPlugin('Config', True)
     conf.registerPlugin('Misc', True)
+    conf.registerPlugin('Network', True)
     conf.registerPlugin('NickAuth', True)
     conf.registerPlugin('User', True)
     conf.registerPlugin('Utilities', True)
@@ -705,8 +760,12 @@ def main():
     # We're going to need to do a darcs predist thing here.
     #conf.supybot.debug.generated.setValue('...')
 
+    if advanced:
+        basedir = '.'
+    filename = os.path.join(basedir, '%s.conf')
+
     filename = something("""In which file would you like to save
-                         this config?""", default='%s.conf' % nick)
+                         this config?""", default=filename % nick)
     if not filename.endswith('.conf'):
         filename += '.conf'
     registry.close(conf.supybot, os.path.expanduser(filename))

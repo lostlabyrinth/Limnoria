@@ -168,6 +168,66 @@ class FunctionsTestCase(SupyTestCase):
         s = ircutils.mircColor('[', 'blue') + ircutils.bold('09:21')
         self.assertEqual(ircutils.stripFormatting(s), '[09:21')
 
+    def testWrap(self):
+        if sys.version_info[0] < 3:
+            pred = len
+        else:
+            pred = lambda s:len(s.encode())
+
+        s = ('foo bar baz qux ' * 100)[0:-1]
+
+        r = ircutils.wrap(s, 10)
+        self.assertTrue(max(map(pred, r)) <= 10)
+        self.assertEqual(''.join(r), s)
+
+        r = ircutils.wrap(s, 100)
+        self.assertTrue(max(map(pred, r)) <= 100)
+        self.assertEqual(''.join(r), s)
+
+        if sys.version_info[0] < 3:
+            uchr = unichr
+            u = lambda s: s.decode('utf8')
+        else:
+            uchr = chr
+            u = lambda x: x
+        s = (u('').join([uchr(0x1f527), uchr(0x1f527), uchr(0x1f527), u(' ')]) * 100)\
+                [0:-1]
+
+        r = ircutils.wrap(s, 20)
+        self.assertTrue(max(map(pred, r)) <= 20, (max(map(pred, r)), repr(r)))
+        self.assertEqual(''.join(r), s)
+
+        r = ircutils.wrap(s, 100)
+        self.assertTrue(max(map(pred, r)) <= 100)
+        self.assertEqual(''.join(r), s)
+
+        s = ('foobarbazqux ' * 100)[0:-1]
+
+        r = ircutils.wrap(s, 10)
+        self.assertTrue(max(map(pred, r)) <= 10)
+        self.assertEqual(''.join(r), s)
+
+        r = ircutils.wrap(s, 100)
+        self.assertTrue(max(map(pred, r)) <= 100)
+        self.assertEqual(''.join(r), s)
+
+        s = ('foobarbazqux' * 100)[0:-1]
+
+        r = ircutils.wrap(s, 10)
+        self.assertTrue(max(map(pred, r)) <= 10)
+        self.assertEqual(''.join(r), s)
+
+        r = ircutils.wrap(s, 100)
+        self.assertTrue(max(map(pred, r)) <= 100)
+        self.assertEqual(''.join(r), s)
+
+        s = uchr(233)*500
+        r = ircutils.wrap(s, 500)
+        self.assertTrue(max(map(pred, r)) <= 500)
+        r = ircutils.wrap(s, 139)
+        self.assertTrue(max(map(pred, r)) <= 139)
+
+
     def testSafeArgument(self):
         s = 'I have been running for 9 seconds'
         bolds = ircutils.bold(s)
@@ -219,6 +279,8 @@ class FunctionsTestCase(SupyTestCase):
         msg = ircmsgs.IrcMsg(':%s PRIVMSG #channel :stuff' % self.hostmask)
         class Irc(object):
             nick = 'bob'
+            network = 'testnet'
+
         irc = Irc()
 
         f = ircutils.standardSubstitute
@@ -264,6 +326,13 @@ class FunctionsTestCase(SupyTestCase):
     def testNickFromHostmask(self):
         self.assertEqual(ircutils.nickFromHostmask('nick!user@host.domain.tld'),
                          'nick')
+        # Hostmasks with user prefixes are sent via userhost-in-names. We need to
+        # properly handle the case where ! is a prefix and not grab '' as the nick
+        # instead.
+        self.assertEqual(ircutils.nickFromHostmask('@nick!user@some.other.host'),
+                         '@nick')
+        self.assertEqual(ircutils.nickFromHostmask('!@nick!user@some.other.host'),
+                         '!@nick')
 
     def testToLower(self):
         self.assertEqual('jemfinch', ircutils.toLower('jemfinch'))
@@ -390,6 +459,41 @@ class IrcStringTestCase(SupyTestCase):
         s2 = ircutils.IrcString('Supybot')
         self.failUnless(s1 == s2)
         self.failIf(s1 != s2)
+
+class AuthenticateTestCase(SupyTestCase):
+    PAIRS = [
+            (b'', ['+']),
+            (b'foo'*150, [
+                'Zm9v'*100,
+                'Zm9v'*50
+                ]),
+            (b'foo'*200, [
+                'Zm9v'*100,
+                'Zm9v'*100,
+                '+'])
+            ]
+    def assertMessages(self, got, should):
+        got = list(got)
+        for (s1, s2) in zip(got, should):
+            self.assertEqual(s1, s2, (got, should))
+
+    def testGenerator(self):
+        for (decoded, encoded) in self.PAIRS:
+            self.assertMessages(
+                    ircutils.authenticate_generator(decoded),
+                    encoded)
+
+    def testDecoder(self):
+        for (decoded, encoded) in self.PAIRS:
+            decoder = ircutils.AuthenticateDecoder()
+            for chunk in encoded:
+                self.assertFalse(decoder.ready, (decoded, encoded))
+                decoder.feed(ircmsgs.IrcMsg(command='AUTHENTICATE',
+                    args=(chunk,)))
+            self.assertTrue(decoder.ready)
+            self.assertEqual(decoder.get(), decoded)
+
+
 
 
 # vim:set shiftwidth=4 softtabstop=4 expandtab textwidth=79:

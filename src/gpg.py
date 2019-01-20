@@ -32,43 +32,37 @@ import os
 import supybot.log as log
 import supybot.conf as conf
 
+found_gnupg_lib = False
+found_gnupg_bin = False
 try:
     import gnupg
 except ImportError:
     # As we do not want Supybot to depend on GnuPG, we will use it only if
     # it is available. Otherwise, we just don't allow user auth through GPG.
-    log.debug('Cannot import gnupg, using fallback.')
+    log.debug('Cannot import gnupg, disabling GPG support.')
     gnupg = None
 try:
     if gnupg:
         gnupg.GPG(gnupghome=None)
+        found_gnupg_lib = found_gnupg_bin = True
 except TypeError:
     # This is the 'gnupg' library, not 'python-gnupg'.
     gnupg = None
+    log.error('Cannot use GPG. gnupg (a Python package) is installed, '
+              'but python-gnupg (an other Python package) should be '
+              'installed instead.')
 except OSError:
     gnupg = None
+    found_gnupg_lib = True
     log.error('Cannot use GPG. python-gnupg is installed but cannot '
               'find the gnupg executable.')
 
 
 available = (gnupg is not None)
 
-def fallback(default_return=None):
-    """Decorator.
-    Does nothing if gnupg is loaded. Otherwise, returns the supplied
-    default value."""
-    def decorator(f):
-        if available:
-            def newf(*args, **kwargs):
-                return f(*args, **kwargs)
-        else:
-            def newf(*args, **kwargs):
-                return default_return
-        return newf
-    return decorator
-
-@fallback()
 def loadKeyring():
+    if not available:
+        return
     global keyring
     path = os.path.abspath(conf.supybot.directories.data.dirize('GPGkeyring'))
     if not os.path.isdir(path):

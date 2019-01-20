@@ -56,13 +56,14 @@ class Network(callbacks.Plugin):
 
     @internationalizeDocstring
     def connect(self, irc, msg, args, opts, network, server, password):
-        """[--ssl] <network> [<host[:port]>] [<password>]
+        """[--nossl] <network> [<host[:port]>] [<password>]
 
         Connects to another network (which will be represented by the name
         provided in <network>) at <host:port>.  If port is not provided, it
-        defaults to 6667, the default port for IRC.  If password is
-        provided, it will be sent to the server in a PASS command.  If --ssl is
-        provided, an SSL connection will be attempted.
+        defaults to 6697, the default port for IRC with SSL.  If password is
+        provided, it will be sent to the server in a PASS command.  If --nossl is
+        provided, an SSL connection will not be attempted, and the port will
+        default to 6667.
         """
         if '.' in network:
             irc.error("Network names cannot have a '.' in them. "
@@ -75,14 +76,16 @@ class Network(callbacks.Plugin):
                    # quite sure what to do about it.
         except callbacks.Error:
             pass
-        ssl = False
+        ssl = True
         for (opt, arg) in opts:
-            if opt == 'ssl':
-                ssl = True
+            if opt == 'nossl':
+                ssl = False
         if server:
             if ':' in server:
                 (server, port) = server.split(':')
                 port = int(port)
+            elif ssl:
+                port = 6697
             else:
                 port = 6667
             serverPort = (server, port)
@@ -99,7 +102,7 @@ class Network(callbacks.Plugin):
         conf.supybot.networks().add(network)
         assert newIrc.callbacks is irc.callbacks, 'callbacks list is different'
         irc.replySuccess(_('Connection to %s initiated.') % network)
-    connect = wrap(connect, ['owner', getopts({'ssl': ''}), 'something',
+    connect = wrap(connect, ['owner', getopts({'nossl': ''}), 'something',
                              additional('something'),
                              additional('something', '')])
 
@@ -112,7 +115,10 @@ class Network(callbacks.Plugin):
         message.  <network> is only necessary if the network is different
         from the network the command is sent on.
         """
-        quitMsg = quitMsg or conf.supybot.plugins.Owner.quitMsg() or msg.nick
+        standard_msg = conf.supybot.plugins.Owner.quitMsg()
+        if standard_msg:
+            standard_msg = ircutils.standardSubstitute(irc, msg, standard_msg)
+        quitMsg = quitMsg or standard_msg or msg.nick
         otherIrc.queueMsg(ircmsgs.quit(quitMsg))
         otherIrc.die()
         conf.supybot.networks().discard(otherIrc.network)
@@ -131,7 +137,10 @@ class Network(callbacks.Plugin):
         (supybot.plugins.Owner.quitMsg) or the nick of the person giving the
         command.
         """
-        quitMsg = quitMsg or conf.supybot.plugins.Owner.quitMsg() or msg.nick
+        standard_msg = conf.supybot.plugins.Owner.quitMsg()
+        if standard_msg:
+            standard_msg = ircutils.standardSubstitute(irc, msg, standard_msg)
+        quitMsg = quitMsg or standard_msg or msg.nick
         otherIrc.queueMsg(ircmsgs.quit(quitMsg))
         if otherIrc != irc:
             # No need to reply if we're reconnecting ourselves.
@@ -148,7 +157,7 @@ class Network(callbacks.Plugin):
     command = wrap(command, ['admin', ('networkIrc', True), many('something')])
     
     def cmdall(self, irc, msg, args, commandAndArgs):
-        """<command> <args>...
+        """<command> [<arg> ...]
         
         Perform <command> (with its associated <arg>s) on all networks.
         """
@@ -156,7 +165,7 @@ class Network(callbacks.Plugin):
         for ircd in ircs:
             self.Proxy(ircd, msg, commandAndArgs)
     cmdall = wrap(cmdall, ['admin', many('something')])
-    
+
     ###
     # whois command-related stuff.
     ###

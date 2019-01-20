@@ -77,6 +77,17 @@ def getSocket(host, port=None, socks_proxy=None, vhost=None, vhostv6=None):
     else:
         raise socket.error('Something wonky happened.')
 
+def isSocketAddress(s):
+    if ':' in s:
+        host, port = s.rsplit(':', 1)
+        try:
+            int(port)
+            sock = getSocket(host, port)
+            return True
+        except (ValueError, socket.error):
+            pass
+    return False
+
 def isIP(s):
     """Returns whether or not a given string is an IP address.
 
@@ -97,6 +108,9 @@ def isIPV4(s):
     >>> isIPV4('abc.abc.abc.abc')
     0
     """
+    if set(s) - set('0123456789.'):
+        # inet_aton ignores trailing data after the first valid IP address
+        return False
     try:
         return bool(socket.inet_aton(str(s)))
     except socket.error:
@@ -131,9 +145,13 @@ def isIPV6(s):
         return False
 
 
+normalize_fingerprint = lambda fp: fp.replace(':', '').lower()
+
 FINGERPRINT_ALGORITHMS = ('md5', 'sha1', 'sha224', 'sha256', 'sha384',
         'sha512')
 def check_certificate_fingerprint(conn, trusted_fingerprints):
+    trusted_fingerprints = set(normalize_fingerprint(fp)
+            for fp in trusted_fingerprints)
     cert = conn.getpeercert(binary_form=True)
     for algorithm in FINGERPRINT_ALGORITHMS:
         h = hashlib.new(algorithm)
@@ -165,8 +183,15 @@ else:
             ca_file=None, trusted_fingerprints=None):
         # TLSv1.0 is the only TLS version Python < 2.7.9 supports
         # (besides SSLv2 and v3, which are known to be insecure)
-        conn = ssl.wrap_socket(conn, certfile=certfile, ca_certs=ca_file,
-                ssl_version=ssl.PROTOCOL_TLSv1)
+        try:
+            conn = ssl.wrap_socket(conn,
+                    server_hostname=hostname,
+                    certfile=certfile, ca_certs=ca_file,
+                    ssl_version=ssl.PROTOCOL_TLSv1)
+        except TypeError: # server_hostname is not supported
+            conn = ssl.wrap_socket(conn,
+                    certfile=certfile, ca_certs=ca_file,
+                    ssl_version=ssl.PROTOCOL_TLSv1)
         if trusted_fingerprints:
             check_certificate_fingerprint(conn, trusted_fingerprints)
         elif verify:

@@ -77,7 +77,7 @@ class Ctcp(callbacks.PluginRegexp):
 
     def _reply(self, irc, msg, s):
         s = '\x01%s\x01' % s
-        irc.reply(s, notice=True, private=True, to=msg.nick)
+        irc.reply(s, notice=True, private=True, to=msg.nick, stripCtcp=False)
 
     def ctcpPing(self, irc, msg, match):
         "^\x01PING(?: (.+))?\x01$"
@@ -91,7 +91,7 @@ class Ctcp(callbacks.PluginRegexp):
     def ctcpVersion(self, irc, msg, match):
         "^\x01VERSION\x01$"
         self.log.info('Received CTCP VERSION from %s', msg.prefix)
-        self._reply(irc, msg, 'VERSION MystiqueIRCBot r1')
+        self._reply(irc, msg, 'VERSION Limnoria %s' % conf.version)
 
     def ctcpUserinfo(self, irc, msg, match):
         "^\x01USERINFO\x01$"
@@ -107,13 +107,13 @@ class Ctcp(callbacks.PluginRegexp):
         "^\x01FINGER\x01$"
         self.log.info('Received CTCP FINGER from %s', msg.prefix)
         self._reply(irc, msg, 'FINGER ' + 
-                    _('MystiqueIRCBot r1'))
+                    _('Supybot, the best Python IRC bot in existence!'))
 
     def ctcpSource(self, irc, msg, match):
         "^\x01SOURCE\x01$"
         self.log.info('Received CTCP SOURCE from %s', msg.prefix)
         self._reply(irc, msg,
-                    'SOURCE I can keep a secret if you can.')
+                    'SOURCE https://github.com/ProgVal/Limnoria')
 
     def doNotice(self, irc, msg):
         if ircmsgs.isCtcp(msg):

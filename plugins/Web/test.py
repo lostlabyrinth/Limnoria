@@ -67,7 +67,13 @@ class WebTestCase(ChannelPluginTestCase):
                         'title http://www.youtube.com/watch?v=x4BtiqPN4u8')
             self.assertResponse(
                     'title http://www.thefreedictionary.com/don%27t',
-                    "don't - definition of don't by The Free Dictionary")
+                    "Don't - definition of don't by The Free Dictionary")
+            self.assertRegexp(
+                    'title '
+                    'https://twitter.com/rlbarnes/status/656554266744586240',
+                    '"PSA: In Firefox 44 Nightly, "http:" pages with '
+                    '<input type="password"> are now marked insecure. '
+                    'https://t.co/qS9LxuRPdm"$')
 
         def testTitleSnarfer(self):
             try:
@@ -77,16 +83,32 @@ class WebTestCase(ChannelPluginTestCase):
             finally:
                 conf.supybot.plugins.Web.titleSnarfer.setValue(False)
 
+        def testMultipleTitleSnarfer(self):
+            try:
+                conf.supybot.plugins.Web.titleSnarfer.setValue(True)
+                conf.supybot.plugins.Web.snarfMultipleUrls.setValue(True)
+                self.feedMsg(
+                        'https://microsoft.com/ https://google.com/')
+                m1 = self.getMsg(' ')
+                m2 = self.getMsg(' ')
+                self.assertTrue(('Microsoft' in m1.args[1]) ^
+                        ('Microsoft' in m2.args[1]))
+                self.assertTrue(('Google' in m1.args[1]) ^
+                        ('Google' in m2.args[1]))
+            finally:
+                conf.supybot.plugins.Web.titleSnarfer.setValue(False)
+                conf.supybot.plugins.Web.snarfMultipleUrls.setValue(False)
+
         def testNonSnarfing(self):
             snarf = conf.supybot.plugins.Web.nonSnarfingRegexp()
             title = conf.supybot.plugins.Web.titleSnarfer()
             try:
-                conf.supybot.plugins.Web.nonSnarfingRegexp.set('m/sf/')
+                conf.supybot.plugins.Web.nonSnarfingRegexp.set('m/fr/')
                 try:
                     conf.supybot.plugins.Web.titleSnarfer.setValue(True)
-                    self.assertSnarfNoResponse('http://sf.net/', 2)
-                    self.assertSnarfRegexp('http://www.sourceforge.net/',
-                                           r'Sourceforge\.net')
+                    self.assertSnarfNoResponse('https://www.google.fr/', 2)
+                    self.assertSnarfRegexp('https://www.google.com/',
+                                           r'Google')
                 finally:
                     conf.supybot.plugins.Web.titleSnarfer.setValue(title)
             finally:
@@ -110,10 +132,10 @@ class WebTestCase(ChannelPluginTestCase):
             conf.supybot.plugins.Web.checkIgnored.setValue(False)
             (oldprefix, self.prefix) = (self.prefix, 'foo!bar@baz')
             try:
-                self.assertSnarfRegexp('https://google.com/', 'Google')
+                self.assertSnarfRegexp('https://google.it/', 'Google')
                 self.assertNotError('admin ignore add %s' % self.prefix)
-                self.assertSnarfRegexp('https://www.google.com/', 'Google')
-                self.assertNoResponse('title http://www.google.com/')
+                self.assertSnarfRegexp('https://www.google.it/', 'Google')
+                self.assertNoResponse('title http://www.google.it/')
             finally:
                 conf.supybot.plugins.Web.titleSnarfer.setValue(False)
                 conf.supybot.plugins.Web.checkIgnored.setValue(True)

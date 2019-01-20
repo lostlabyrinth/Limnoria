@@ -48,6 +48,14 @@ class ReplyTestCase(ChannelPluginTestCase):
         self.assertEqual(m.command, 'NOTICE')
         self.assertEqual(m.args[0], self.nick)
 
+    def testReplies(self):
+        self.assertResponse('replies a b c', 'a, b, and c')
+        self.assertNotError('config channel supybot.reply.oneToOne False')
+        self.assertResponse('replies a b c', 'a')
+        self.assertResponse(' ', 'b')
+        self.assertResponse(' ', 'c')
+        self.assertNotError('config channel supybot.reply.oneToOne True')
+
 class ReplyNonChannelTestCase(PluginTestCase):
     plugins = ('Reply',)
     def testAction(self):

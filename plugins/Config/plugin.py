@@ -65,9 +65,15 @@ def getWrapper(name):
 
 def getCapability(name):
     capability = 'owner' # Default to requiring the owner capability.
+    if not name.startswith('supybot') and not name.startswith('users'):
+        name = 'supybot.' + name
     parts = registry.split(name)
+    group = getattr(conf, parts.pop(0))
     while parts:
-        part = parts.pop()
+        part = parts.pop(0)
+        group = group.get(part)
+        if not getattr(group, '_opSettable', True):
+            return 'owner'
         if ircutils.isChannel(part):
             # If a registry value has a channel in it, it requires a
             # 'channel,op' capability, or so we assume.  We'll see if we're
@@ -75,6 +81,29 @@ def getCapability(name):
             capability = ircdb.makeChannelCapability(part, 'op')
         ### Do more later, for specific capabilities/sections.
     return capability
+
+def isReadOnly(name):
+    """Prevents changing certain config variables to gain shell access via
+    a vulnerable IRC network."""
+    parts = registry.split(name.lower())
+    if parts[0] != 'supybot':
+        parts.insert(0, 'supybot')
+    if parts == ['supybot', 'commands', 'allowshell'] and \
+            not conf.supybot.commands.allowShell():
+        # allow setting supybot.commands.allowShell from True to False,
+        # but not from False to True.
+        # Otherwise an IRC network could overwrite it.
+        return True
+    elif parts[0:2] == ['supybot', 'directories'] and \
+            not conf.supybot.commands.allowShell():
+        # Setting plugins directory allows for arbitrary code execution if
+        # an attacker can both use the IRC network to MITM and upload files
+        # on the server (eg. with a web CMS).
+        # Setting other directories allows writing data at arbitrary
+        # locations.
+        return True
+    else:
+        return False
 
 def _reload():
     ircdb.users.reload()
@@ -176,45 +205,63 @@ class Config(callbacks.Plugin):
             value = _('Global: %s; %s: %s') % (value, msg.args[0], s)
         if hasattr(group, 'value'):
             if not group._private:
-                irc.reply(value)
+                return (value, None)
             else:
                 capability = getCapability(group._name)
                 if ircdb.checkCapability(msg.prefix, capability):
-                    irc.reply(value, private=True)
+                    return (value, True)
                 else:
-                    irc.errorNoCapability(capability)
+                    irc.errorNoCapability(capability, Raise=True)
         else:
             irc.error(_('That registry variable has no value.  Use the list '
                       'command in this plugin to see what variables are '
                       'available in this group.'))
 
     def _setValue(self, irc, msg, group, value):
+        if isReadOnly(group._name):
+            irc.error(_("This configuration variable is not writeable "
+                "via IRC. To change it you have to: 1) use the 'flush' command 2) edit "
+                "the config file 3) use the 'config reload' command."), Raise=True)
         capability = getCapability(group._name)
         if ircdb.checkCapability(msg.prefix, capability):
             # I think callCommand catches exceptions here.  Should it?
             group.set(value)
-            irc.replySuccess()
         else:
-            irc.errorNoCapability(capability)
+            irc.errorNoCapability(capability, Raise=True)
 
     @internationalizeDocstring
-    def channel(self, irc, msg, args, channel, group, value):
+    def channel(self, irc, msg, args, channels, group, value):
         """[<channel>] <name> [<value>]
 
         If <value> is given, sets the channel configuration variable for <name>
         to <value> for <channel>.  Otherwise, returns the current channel
         configuration value of <name>.  <channel> is only necessary if the
-        message isn't sent in the channel itself."""
+        message isn't sent in the channel itself. More than one channel may
+        be given at once by separating them with commas."""
         if not group.channelValue:
             irc.error(_('That configuration variable is not a channel-specific '
                       'configuration variable.'))
             return
-        group = group.get(channel)
         if value is not None:
-            self._setValue(irc, msg, group, value)
+            for channel in channels:
+                assert irc.isChannel(channel)
+                self._setValue(irc, msg, group.get(channel), value)
+            irc.replySuccess()
         else:
-            self._getValue(irc, msg, group)
-    channel = wrap(channel, ['channel', 'settableConfigVar',
+            values = []
+            private = None
+            for channel in channels:
+                (value, private_value) = self._getValue(irc, msg, group.get(channel))
+                values.append((channel, value))
+                if private_value:
+                    private = True
+            if len(channels) > 1:
+                irc.reply('; '.join([
+                    '%s: %s' % (channel, value)
+                    for (channel, value) in values]))
+            else:
+                irc.reply(values[0][1])
+    channel = wrap(channel, ['channels', 'settableConfigVar',
                              additional('text')])
 
     @internationalizeDocstring
@@ -227,8 +274,10 @@ class Config(callbacks.Plugin):
         """
         if value is not None:
             self._setValue(irc, msg, group, value)
+            irc.replySuccess()
         else:
-            self._getValue(irc, msg, group, addChannel=group.channelValue)
+            (value, private) = self._getValue(irc, msg, group, addChannel=group.channelValue)
+            irc.reply(value, private=private)
     config = wrap(config, ['settableConfigVar', additional('text')])
 
     @internationalizeDocstring
@@ -294,6 +343,10 @@ class Config(callbacks.Plugin):
         command will export a "sanitized" configuration file suitable for
         showing publicly.
         """
+        if not conf.supybot.commands.allowShell():
+            # Disallow writing arbitrary files
+            irc.error('This command is not available, because '
+                'supybot.commands.allowShell is False.', Raise=True)
         registry.close(conf.supybot, filename, private=False)
         irc.replySuccess()
     export = wrap(export, [('checkCapability', 'owner'), 'filename'])

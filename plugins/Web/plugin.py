@@ -30,6 +30,7 @@
 
 import re
 import sys
+import string
 import socket
 
 import supybot.conf as conf
@@ -46,19 +47,19 @@ _ = PluginInternationalization('Web')
 if minisix.PY3:
     from html.parser import HTMLParser
     from html.entities import entitydefs
+    import http.client as http_client
 else:
     from HTMLParser import HTMLParser
     from htmlentitydefs import entitydefs
+    import httplib as http_client
 
-class Title(HTMLParser):
+class Title(utils.web.HtmlToText):
     entitydefs = entitydefs.copy()
     entitydefs['nbsp'] = ' '
-    entitydefs['apos'] = '\''
     def __init__(self):
         self.inTitle = False
         self.inSvg = False
-        self.title = ''
-        HTMLParser.__init__(self)
+        utils.web.HtmlToText.__init__(self)
 
     @property
     def inHtmlTitle(self):
@@ -76,18 +77,9 @@ class Title(HTMLParser):
         elif tag == 'svg':
             self.inSvg = False
 
-    def handle_data(self, data):
+    def append(self, data):
         if self.inHtmlTitle:
-            self.title += data
-
-    def handle_entityref(self, name):
-        if self.inHtmlTitle:
-            if name in self.entitydefs:
-                self.title += self.entitydefs[name]
-
-    def handle_charref(self, name):
-        if self.inHtmlTitle:
-            self.title += (unichr if minisix.PY2 else chr)(int(name))
+            super(Title, self).append(data)
 
 class DelayedIrc:
     def __init__(self, irc):
@@ -101,26 +93,41 @@ class DelayedIrc:
         assert name not in ('reply', 'error', '_irc', '_msg', '_replies')
         return getattr(self._irc, name)
 
-def fetch_sandbox(f):
-    """Runs a command in a forked process with limited memory resources
-    to prevent memory bomb caused by specially crafted http responses."""
-    def process(self, irc, msg, *args, **kwargs):
-        delayed_irc = DelayedIrc(irc)
-        f(self, delayed_irc, msg, *args, **kwargs)
-        return delayed_irc._replies
-    def newf(self, irc, *args):
-        try:
-            replies = commands.process(process, self, irc, *args,
-                    timeout=10, heap_size=1024*1024,
-                    pn=self.name(), cn=f.__name__)
-        except commands.ProcessTimeoutError:
-            raise utils.web.Error(_('Page is too big or the server took '
-                    'too much time to answer the request.'))
-        else:
-            for (method, args, kwargs) in replies:
-                getattr(irc, method)(*args, **kwargs)
-    newf.__doc__ = f.__doc__
-    return newf
+if hasattr(http_client, '_MAXHEADERS'):
+    def fetch_sandbox(f):
+        """Runs a command in a forked process with limited memory resources
+        to prevent memory bomb caused by specially crafted http responses.
+
+        On CPython versions with support for limiting the number of headers,
+        this is the identity function"""
+        return f
+else:
+    # For the following CPython versions (as well as the matching Pypy
+    # versions):
+    # * 2.6 before 2.6.9
+    # * 2.7 before 2.7.9
+    # * 3.2 before 3.2.6
+    # * 3.3 before 3.3.3
+    def fetch_sandbox(f):
+        """Runs a command in a forked process with limited memory resources
+        to prevent memory bomb caused by specially crafted http responses."""
+        def process(self, irc, msg, *args, **kwargs):
+            delayed_irc = DelayedIrc(irc)
+            f(self, delayed_irc, msg, *args, **kwargs)
+            return delayed_irc._replies
+        def newf(self, irc, *args):
+            try:
+                replies = commands.process(process, self, irc, *args,
+                        timeout=10, heap_size=10*1024*1024,
+                        pn=self.name(), cn=f.__name__)
+            except (commands.ProcessTimeoutError, MemoryError):
+                raise utils.web.Error(_('Page is too big or the server took '
+                        'too much time to answer the request.'))
+            else:
+                for (method, args, kwargs) in replies:
+                    getattr(irc, method)(*args, **kwargs)
+        newf.__doc__ = f.__doc__
+        return newf
 
 def catch_web_errors(f):
     """Display a nice error instead of "An error has occurred"."""
@@ -129,19 +136,21 @@ def catch_web_errors(f):
             f(self, irc, *args, **kwargs)
         except utils.web.Error as e:
             irc.reply(str(e))
-    newf.__doc__ = f.__doc__
-    return newf
+    return utils.python.changeFunctionName(newf, f.__name__, f.__doc__)
 
 class Web(callbacks.PluginRegexp):
-    """Add the help for "@help Web" here."""
+    """Add the help for 'help Web' here."""
     regexps = ['titleSnarfer']
+    threaded = True
 
     def noIgnore(self, irc, msg):
         return not self.registryValue('checkIgnored', msg.args[0])
 
-    def getTitle(self, url):
+    def getTitle(self, irc, url, raiseErrors):
         size = conf.supybot.protocols.http.peekSize()
-        text = utils.web.getUrl(url, size=size)
+        timeout = self.registryValue('timeout')
+        (target, text) = utils.web.getUrlTargetAndContent(url, size=size,
+                timeout=timeout)
         try:
             text = text.decode(utils.web.getEncoding(text) or 'utf8',
                     'replace')
@@ -149,13 +158,23 @@ class Web(callbacks.PluginRegexp):
             pass
         parser = Title()
         if minisix.PY3 and isinstance(text, bytes):
-            irc.error(_('Could not guess the page\'s encoding. (Try '
-                    'installing python-charade.)'), Raise=True)
+            if raiseErrors:
+                irc.error(_('Could not guess the page\'s encoding. (Try '
+                        'installing python-charade.)'), Raise=True)
+            else:
+                return None
         parser.feed(text)
-        title = parser.title
+        parser.close()
+        title = utils.str.normalizeWhitespace(''.join(parser.data).strip())
         if title:
-            title = utils.web.htmlToText(parser.title.strip())
-        return title
+            return (target, title)
+        elif raiseErrors:
+            if len(text) < size:
+                irc.error(_('That URL appears to have no HTML title.'),
+                        Raise=True)
+            else:
+                irc.error(format(_('That URL appears to have no HTML title '
+                                 'within the first %S.'), size), Raise=True)
 
     @fetch_sandbox
     def titleSnarfer(self, irc, msg, match):
@@ -172,13 +191,22 @@ class Web(callbacks.PluginRegexp):
             if r and r.search(url):
                 self.log.debug('Not titleSnarfing %q.', url)
                 return
-            title = self.getTitle(url)
+            r = self.getTitle(irc, url, False)
+            if not r:
+                return
+            (target, title) = r
             if title:
-                domain = utils.web.getDomain(fd.geturl()
+                domain = utils.web.getDomain(target
                         if self.registryValue('snarferShowTargetDomain', channel)
                         else url)
-                s = format(_('Title: %s (at %s)'), title, domain)
+                prefix = self.registryValue('snarferPrefix', channel)
+                s = "%s %s" % (prefix, title)
+                if self.registryValue('snarferShowDomain', channel):
+                    s += format(_(' (at %s)'), domain)
                 irc.reply(s, prefixNick=False)
+        if self.registryValue('snarfMultipleUrls', channel):
+            # FIXME: hack
+            msg.tag('repliedTo', False)
     titleSnarfer = urlSnarfer(titleSnarfer)
     titleSnarfer.__doc__ = utils.web._httpUrlRe
 
@@ -195,9 +223,9 @@ class Web(callbacks.PluginRegexp):
                 break
         return passed
 
+    @wrap(['httpUrl'])
     @catch_web_errors
     @fetch_sandbox
-    @internationalizeDocstring
     def headers(self, irc, msg, args, url):
         """<url>
 
@@ -207,19 +235,19 @@ class Web(callbacks.PluginRegexp):
         if not self._checkURLWhitelist(url):
             irc.error("This url is not on the whitelist.")
             return
-        fd = utils.web.getUrlFd(url)
+        timeout = self.registryValue('timeout')
+        fd = utils.web.getUrlFd(url, timeout=timeout)
         try:
             s = ', '.join([format(_('%s: %s'), k, v)
                            for (k, v) in fd.headers.items()])
             irc.reply(s)
         finally:
             fd.close()
-    headers = wrap(headers, ['httpUrl'])
 
     _doctypeRe = re.compile(r'(<!DOCTYPE[^>]+>)', re.M)
+    @wrap(['httpUrl'])
     @catch_web_errors
     @fetch_sandbox
-    @internationalizeDocstring
     def doctype(self, irc, msg, args, url):
         """<url>
 
@@ -230,19 +258,18 @@ class Web(callbacks.PluginRegexp):
             irc.error("This url is not on the whitelist.")
             return
         size = conf.supybot.protocols.http.peekSize()
-        s = utils.web.getUrl(url, size=size) \
-                        .decode('utf8')
+        timeout = self.registryValue('timeout')
+        s = utils.web.getUrl(url, size=size, timeout=timeout).decode('utf8')
         m = self._doctypeRe.search(s)
         if m:
             s = utils.str.normalizeWhitespace(m.group(0))
             irc.reply(s)
         else:
             irc.reply(_('That URL has no specified doctype.'))
-    doctype = wrap(doctype, ['httpUrl'])
 
+    @wrap(['httpUrl'])
     @catch_web_errors
     @fetch_sandbox
-    @internationalizeDocstring
     def size(self, irc, msg, args, url):
         """<url>
 
@@ -252,10 +279,13 @@ class Web(callbacks.PluginRegexp):
         if not self._checkURLWhitelist(url):
             irc.error("This url is not on the whitelist.")
             return
-        fd = utils.web.getUrlFd(url)
+        timeout = self.registryValue('timeout')
+        fd = utils.web.getUrlFd(url, timeout=timeout)
         try:
             try:
                 size = fd.headers['Content-Length']
+                if size is None:
+                    raise KeyError('content-length')
                 irc.reply(format(_('%u is %S long.'), url, int(size)))
             except KeyError:
                 size = conf.supybot.protocols.http.peekSize()
@@ -268,11 +298,10 @@ class Web(callbacks.PluginRegexp):
                                      url, size))
         finally:
             fd.close()
-    size = wrap(size, ['httpUrl'])
 
+    @wrap([getopts({'no-filter': ''}), 'httpUrl'])
     @catch_web_errors
     @fetch_sandbox
-    @internationalizeDocstring
     def title(self, irc, msg, args, optlist, url):
         """[--no-filter] <url>
 
@@ -283,29 +312,25 @@ class Web(callbacks.PluginRegexp):
         if not self._checkURLWhitelist(url):
             irc.error("This url is not on the whitelist.")
             return
-        title = self.getTitle(url)
+        r = self.getTitle(irc, url, True)
+        if not r:
+            return
+        (target, title) = r
         if title:
             if not [y for x,y in optlist if x == 'no-filter']:
                 for i in range(1, 4):
                     title = title.replace(chr(i), '')
             irc.reply(title)
-        elif len(text) < size:
-            irc.reply(_('That URL appears to have no HTML title.'))
-        else:
-            irc.reply(format(_('That URL appears to have no HTML title '
-                             'within the first %S.'), size))
-    title = wrap(title, [getopts({'no-filter': ''}), 'httpUrl'])
 
-    @internationalizeDocstring
+    @wrap(['text'])
     def urlquote(self, irc, msg, args, text):
         """<text>
 
         Returns the URL quoted form of the text.
         """
         irc.reply(utils.web.urlquote(text))
-    urlquote = wrap(urlquote, ['text'])
 
-    @internationalizeDocstring
+    @wrap(['text'])
     def urlunquote(self, irc, msg, args, text):
         """<text>
 
@@ -313,11 +338,10 @@ class Web(callbacks.PluginRegexp):
         """
         s = utils.web.urlunquote(text)
         irc.reply(s)
-    urlunquote = wrap(urlunquote, ['text'])
 
+    @wrap(['url'])
     @catch_web_errors
     @fetch_sandbox
-    @internationalizeDocstring
     def fetch(self, irc, msg, args, url):
         """<url>
 
@@ -329,14 +353,13 @@ class Web(callbacks.PluginRegexp):
             irc.error("This url is not on the whitelist.")
             return
         max = self.registryValue('fetch.maximum')
+        timeout = self.registryValue('fetch.timeout')
         if not max:
             irc.error(_('This command is disabled '
                       '(supybot.plugins.Web.fetch.maximum is set to 0).'),
                       Raise=True)
-        fd = utils.web.getUrl(url, size=max) \
-                        .decode('utf8')
+        fd = utils.web.getUrl(url, size=max, timeout=timeout).decode('utf8')
         irc.reply(fd)
-    fetch = wrap(fetch, ['url'])
 
 Class = Web
 

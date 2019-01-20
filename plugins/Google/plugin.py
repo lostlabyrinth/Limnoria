@@ -30,10 +30,7 @@
 
 import re
 import sys
-import cgi
 import json
-import time
-import socket
 
 import supybot.conf as conf
 import supybot.utils as utils
@@ -45,8 +42,6 @@ import supybot.ircutils as ircutils
 import supybot.callbacks as callbacks
 from supybot.i18n import PluginInternationalization, internationalizeDocstring
 _ = PluginInternationalization('Google')
-
-import json
 
 class Google(callbacks.PluginRegexp):
     """This is a simple plugin to provide access to the Google services we
@@ -80,11 +75,21 @@ class Google(callbacks.PluginRegexp):
             msg = ircmsgs.privmsg(msg.args[0], s, msg=msg)
         return msg
 
-    _gsearchUrl = 'http://ajax.googleapis.com/ajax/services/search/web'
-    @internationalizeDocstring
+    _decode_re = re.compile(r'<h3 class="r"><a href="/url\?q=(?P<url>[^"]+)&[^"]+">(?P<title>.*?)</a></h3>.*?<a class="[^"]+" href="/url\?q=(?P<cacheUrl>http://webcache[^"]+)">.*?<span class="st">(?P<content>.*?)</span>', re.DOTALL | re.MULTILINE)
+    @classmethod
+    def decode(cls, text):
+        matches = cls._decode_re.findall(text)
+        results = []
+        for match in matches:
+            r = dict(zip(('url', 'title', 'cacheUrl', 'content'), match))
+            r['url'] = utils.web.urlunquote(utils.web.htmlToText(r['url'].split('&amp;')[0]))
+            results.append(r)
+        return results
+
+
+    _gsearchUrl = 'https://www.google.com/search'
     def search(self, query, channel, options={}):
-        """Perform a search using Google's AJAX API.
-        search("search phrase", options={})
+        """search("search phrase", options={})
 
         Valid options are:
             smallsearch - True/False (Default: False)
@@ -92,13 +97,20 @@ class Google(callbacks.PluginRegexp):
             language - Restrict search to documents in the given language
                        (Default: "lang_en")
         """
+        self.log.warning('The Google plugin search is deprecated since '
+                'Google closed their public API and will be removed in a '
+                'future release. Please consider switching to an other '
+                'plugin for your searches, like '
+                '<https://github.com/Hoaas/Supybot-plugins/tree/master/DuckDuckGo>, '
+                '<https://github.com/joulez/GoogleCSE>, or '
+                '<https://github.com/GLolol/SupyPlugins/tree/master/DDG>.')
         ref = self.registryValue('referer')
         if not ref:
             ref = 'http://%s/%s' % (dynamic.irc.server,
                                     dynamic.irc.nick)
         headers = dict(utils.web.defaultHeaders)
         headers['Referer'] = ref
-        opts = {'q': query, 'v': '1.0'}
+        opts = {'q': query, 'gbv': '2'}
         for (k, v) in options.items():
             if k == 'smallsearch':
                 if v:
@@ -108,10 +120,10 @@ class Google(callbacks.PluginRegexp):
             elif k == 'filter':
                 opts['safe'] = v
             elif k == 'language':
-                opts['lr'] = v
+                opts['hl'] = v
         defLang = self.registryValue('defaultLanguage', channel)
-        if 'lr' not in opts and defLang:
-            opts['lr'] = defLang
+        if 'hl' not in opts and defLang:
+            opts['hl'] = defLang.strip('lang_')
         if 'safe' not in opts:
             opts['safe'] = self.registryValue('searchFilter', dynamic.channel)
         if 'rsz' not in opts:
@@ -120,22 +132,17 @@ class Google(callbacks.PluginRegexp):
         text = utils.web.getUrl('%s?%s' % (self._gsearchUrl,
                                            utils.web.urlencode(opts)),
                                 headers=headers).decode('utf8')
-        data = json.loads(text)
-        if data['responseStatus'] != 200:
-            self.log.info("Google: unhandled error message: ", text)
-            raise callbacks.Error(data['responseDetails'])
-        return data
+        return text
 
     def formatData(self, data, bold=True, max=0, onetoone=False):
-        if isinstance(data, minisix.string_types):
-            return data
+        data = self.decode(data)
         results = []
         if max:
             data = data[:max]
         for result in data:
-            title = utils.web.htmlToText(result['titleNoFormatting']\
+            title = utils.web.htmlToText(result['title']\
                                          .encode('utf-8'))
-            url = result['unescapedUrl']
+            url = result['url']
             if minisix.PY2:
                 url = url.encode('utf-8')
             if title:
@@ -163,10 +170,11 @@ class Google(callbacks.PluginRegexp):
         """
         opts = dict(opts)
         data = self.search(text, msg.args[0], {'smallsearch': True})
-        if data['responseData']['results']:
-            url = data['responseData']['results'][0]['unescapedUrl']
+        data = self.decode(data)
+        if data:
+            url = data[0]['url']
             if 'snippet' in opts:
-                snippet = data['responseData']['results'][0]['content']
+                snippet = data[0]['content']
                 snippet = " | " + utils.web.htmlToText(snippet, tagReplace='')
             else:
                 snippet = ""
@@ -194,7 +202,7 @@ class Google(callbacks.PluginRegexp):
         # do not want @google to echo ~20 lines of results, even if you
         # have reply.oneToOne enabled.
         onetoone = self.registryValue('oneToOne', msg.args[0])
-        for result in self.formatData(data['responseData']['results'],
+        for result in self.formatData(data,
                                   bold=bold, max=max, onetoone=onetoone):
             irc.reply(result)
     google = wrap(google, [getopts({'language':'something',
@@ -208,8 +216,8 @@ class Google(callbacks.PluginRegexp):
         Returns a link to the cached version of <url> if it is available.
         """
         data = self.search(url, msg.args[0], {'smallsearch': True})
-        if data['responseData']['results']:
-            m = data['responseData']['results'][0]
+        if data:
+            m = data[0]
             if m['cacheUrl']:
                 url = m['cacheUrl'].encode('utf-8')
                 irc.reply(url)
@@ -217,6 +225,7 @@ class Google(callbacks.PluginRegexp):
         irc.error(_('Google seems to have no cache for that site.'))
     cache = wrap(cache, ['url'])
 
+    _fight_re = re.compile(r'id="resultStats"[^>]*>(?P<stats>[^<]*)')
     @internationalizeDocstring
     def fight(self, irc, msg, args):
         """<search string> <search string> [<search string> ...]
@@ -227,9 +236,13 @@ class Google(callbacks.PluginRegexp):
         channel = msg.args[0]
         results = []
         for arg in args:
-            data = self.search(arg, channel, {'smallsearch': True})
-            count = data['responseData']['cursor'].get('estimatedResultCount',
-                                                       0)
+            text = self.search(arg, channel, {'smallsearch': True})
+            i = text.find('id="resultStats"')
+            stats = utils.web.htmlToText(self._fight_re.search(text).group('stats'))
+            if stats == '':
+                results.append((0, args))
+                continue
+            count = ''.join(filter('0123456789'.__contains__, stats))
             results.append((int(count), arg))
         results.sort()
         results.reverse()
@@ -243,7 +256,8 @@ class Google(callbacks.PluginRegexp):
 
     def _translate(self, sourceLang, targetLang, text):
         headers = dict(utils.web.defaultHeaders)
-        headers['User-Agent'] = ('Mozilla/5.0 (Linux; U; x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 MystiqueIRCBot')
+        headers['User-Agent'] = ('Mozilla/5.0 (X11; U; Linux i686) '
+                                 'Gecko/20071127 Firefox/2.0.0.11')
 
         sourceLang = utils.web.urlquote(sourceLang)
         targetLang = utils.web.urlquote(targetLang)
@@ -276,7 +290,9 @@ class Google(callbacks.PluginRegexp):
         """<source language> [to] <target language> <text>
 
         Returns <text> translated from <source language> into <target
-        language>.
+        language>. <source language> and <target language> take language
+        codes (not language names), which are listed here:
+        https://cloud.google.com/translate/docs/languages
         """
         channel = msg.args[0]
         (text, language) = self._translate(sourceLang, targetLang, text)
@@ -313,7 +329,7 @@ class Google(callbacks.PluginRegexp):
         if not ircutils.isChannel(channel):
             channel = None
         url = self._googleUrl(expr, channel)
-        h = {"User-Agent":"Mozilla/5.0 (Linux; U; x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 MystiqueIRCBot"}
+        h = {"User-Agent":"Mozilla/5.0 (Windows NT 6.2; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1667.0 Safari/537.36"}
         html = utils.web.getUrl(url, headers=h).decode('utf8')
         match = self._calcRe1.search(html)
         if not match:

@@ -119,7 +119,7 @@ httpserver.set_default_templates(DEFAULT_TEMPLATES)
 class FactoidsCallback(httpserver.SupyHTTPServerCallback):
     name = 'Factoids web interface'
 
-    def doGet(self, handler, path):
+    def doGetOrHead(self, handler, path, write_content):
         parts = path.split('/')[1:]
         if path == '/':
             self.send_response(200)
@@ -127,23 +127,25 @@ class FactoidsCallback(httpserver.SupyHTTPServerCallback):
             self.end_headers()
             self.write(httpserver.get_template('factoids/index.html'))
         elif len(parts) == 2:
-            channel = utils.web.unquote(parts[0])
+            channel = utils.web.urlunquote(parts[0])
             if not ircutils.isChannel(channel):
                 self.send_response(404)
                 self.send_header('Content-type', 'text/html; charset=utf-8')
                 self.end_headers()
-                self.write(httpserver.get_template('generic/error.html')%
-                    {'title': 'Factoids - not a channel',
-                     'error': 'This is not a channel'})
+                if write_content:
+                    self.write(httpserver.get_template('generic/error.html')%
+                        {'title': 'Factoids - not a channel',
+                         'error': 'This is not a channel'})
                 return
             if not self._plugin.registryValue('web.channel', channel):
                 self.send_response(403)
                 self.send_header('Content-type', 'text/html; charset=utf-8')
                 self.end_headers()
-                self.write(httpserver.get_template('generic/error.html')%
-                    {'title': 'Factoids - unavailable',
-                     'error': 'This channel does not exist or its factoids '
-                              'are not available here.'})
+                if write_content:
+                    self.write(httpserver.get_template('generic/error.html')%
+                        {'title': 'Factoids - unavailable',
+                         'error': 'This channel does not exist or its factoids '
+                                  'are not available here.'})
                 return
             db = self._plugin.getDb(channel)
             cursor = db.cursor()
@@ -157,8 +159,7 @@ class FactoidsCallback(httpserver.SupyHTTPServerCallback):
                     factoids[key] = {}
                 factoids[key][id_] = fact
             content = ''
-            keys = factoids.keys()
-            keys.sort()
+            keys = sorted(factoids.keys())
             for key in keys:
                 facts = factoids[key]
                 content += '<tr>'
@@ -173,13 +174,14 @@ class FactoidsCallback(httpserver.SupyHTTPServerCallback):
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
-            self.write(httpserver.get_template('factoids/channel.html')%
-                    {'channel': channel, 'rows': content})
+            if write_content:
+                self.write(httpserver.get_template('factoids/channel.html')%
+                        {'channel': channel, 'rows': content})
     def doPost(self, handler, path, form):
         if 'chan' in form:
             self.send_response(303)
             self.send_header('Location',
-                    './%s/' % utils.web.quote(form['chan'].value))
+                    './%s/' % utils.web.urlquote(form['chan'].value))
             self.end_headers()
         else:
             self.send_response(400)
@@ -276,7 +278,7 @@ class Factoids(callbacks.Plugin, plugins.ChannelDBHandler):
     def learn(self, irc, msg, args, channel, key, factoid):
         if self.registryValue('requireVoice', channel) and \
                 not irc.state.channels[channel].isVoicePlus(msg.nick):
-            irc.error(_('You have to be at least voiced to teach factoids.'))
+            irc.error(_('You have to be at least voiced to teach factoids.'), Raise=True)
         
         # if neither key nor factoid exist, add them.
         # if key exists but factoid doesn't, add factoid, link it to existing key
@@ -655,7 +657,7 @@ class Factoids(callbacks.Plugin, plugins.ChannelDBHandler):
         """
         if self.registryValue('requireVoice', channel) and \
                 not irc.state.channels[channel].isVoicePlus(msg.nick):
-            irc.error(_('You have to be at least voiced to remove factoids.'))
+            irc.error(_('You have to be at least voiced to remove factoids.'), Raise=True)
         number = None
         if len(words) > 1:
             if words[-1].isdigit():

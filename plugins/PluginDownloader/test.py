@@ -71,6 +71,11 @@ class PluginDownloaderTestCase(PluginTestCase):
         self.assertError('plugindownloader install ProgVal Darcs')
         self._testPluginInstalled('AttackProtector')
 
+    def testShellForbidden(self):
+        with conf.supybot.commands.allowShell.context(False):
+            self.assertRegexp('plugindownloader install ProgVal Darcs',
+                    'Error:.*not available.*supybot.commands.allowShell')
+
     def testInstallQuantumlemur(self):
         self.assertError('plugindownloader install quantumlemur AttackProtector')
         self.assertNotError('plugindownloader install quantumlemur Listener')
@@ -93,6 +98,10 @@ class PluginDownloaderTestCase(PluginTestCase):
     def testInstallSpiderDave(self):
         self.assertNotError('plugindownloader install SpiderDave Pastebin')
         self._testPluginInstalled('Pastebin')
+
+    def testInstallNonAsciiInit(self):
+        self.assertNotError('plugindownloader install Hoaas DuckDuckGo')
+        self._testPluginInstalled('DuckDuckGo')
 
     def testInfo(self):
         self.assertResponse('plugindownloader info ProgVal Twitter',

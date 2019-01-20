@@ -32,6 +32,7 @@ import re
 import sys
 import time
 import uuid
+import functools
 
 import supybot.gpg as gpg
 import supybot.conf as conf
@@ -40,8 +41,13 @@ import supybot.ircdb as ircdb
 from supybot.commands import *
 import supybot.utils.minisix as minisix
 import supybot.plugins as plugins
+import supybot.commands as commands
 import supybot.ircutils as ircutils
 import supybot.callbacks as callbacks
+if minisix.PY3:
+    import http.client as http_client
+else:
+    import httplib as http_client
 try:
     from supybot.i18n import PluginInternationalization
     _ = PluginInternationalization('GPG')
@@ -50,10 +56,42 @@ except ImportError:
     # without the i18n module
     _ = lambda x: x
 
+def check_gpg_available(f):
+    if gpg.available:
+        return f
+    else:
+        if not gpg.found_gnupg_lib:
+            def newf(self, irc, *args):
+                irc.error(_('gnupg features are not available because '
+                    'the python-gnupg library is not installed.'))
+        elif not gpg.found_gnupg_bin:
+            def newf(self, irc, *args):
+                irc.error(_('gnupg features are not available because '
+                    'the gnupg executable is not installed.'))
+        else:
+            # This case should never happen.
+            def newf(self, irc, *args):
+                irc.error(_('gnupg features are not available.'))
+        newf.__doc__ = f.__doc__
+        newf.__name__ = f.__name__
+        return newf
+
+if hasattr(http_client, '_MAXHEADERS'):
+    safe_getUrl = utils.web.getUrl
+else:
+    def safe_getUrl(url):
+        try:
+            return commands.process(utils.web.getUrl, url,
+                    timeout=10, heap_size=10*1024*1024,
+                    pn='GPG')
+        except (commands.ProcessTimeoutError, MemoryError):
+            raise utils.web.Error(_('Page is too big or the server took '
+                    'too much time to answer the request.'))
 
 class GPG(callbacks.Plugin):
     """Provides authentication based on GPG keys."""
     class key(callbacks.Commands):
+        @check_gpg_available
         def add(self, irc, msg, args, user, keyid, keyserver):
             """<key id> <key server>
 
@@ -79,6 +117,7 @@ class GPG(callbacks.Plugin):
                          ('somethingWithoutSpaces',
                              _('You must give a valid key server'))])
 
+        @check_gpg_available
         def remove(self, irc, msg, args, user, fingerprint):
             """<fingerprint>
 
@@ -99,6 +138,7 @@ class GPG(callbacks.Plugin):
                 irc.error(_('GPG key not associated with your account.'))
         remove = wrap(remove, ['user', 'somethingWithoutSpaces'])
 
+        @check_gpg_available
         def list(self, irc, msg, args, user):
             """takes no arguments
 
@@ -120,6 +160,7 @@ class GPG(callbacks.Plugin):
             self._tokens = dict(filter(lambda x_y: x_y[1][1]>now,
                 self._tokens.items()))
 
+        @check_gpg_available
         def gettoken(self, irc, msg, args):
             """takes no arguments
 
@@ -141,13 +182,14 @@ class GPG(callbacks.Plugin):
                 r'\r?\n-----END PGP SIGNATURE-----',
                 re.S)
         
+        @check_gpg_available
         def auth(self, irc, msg, args, url):
             """<url>
 
             Check the GPG signature at the <url> and authenticates you if
             the key used is associated to a user."""
             self._expire_tokens()
-            content = utils.web.getUrl(url)
+            content = safe_getUrl(url)
             if minisix.PY3 and isinstance(content, bytes):
                 content = content.decode()
             match = self._auth_re.search(content)

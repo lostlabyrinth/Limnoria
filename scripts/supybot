@@ -74,13 +74,13 @@ try:
 except ImportError:
     sys.stderr.write("""Error:
     You are running a mix of Limnoria and stock Supybot code. Although you run
-    one of Limnoria\'s executables are installed, Python tries to load stock
+    one of Limnoria\'s executables, Python tries to load stock
     Supybot\'s library. To fix this issue, uninstall Supybot
     ("%s -m pip uninstall supybot" should do the job)
     and install Limnoria again.
     For your information, Supybot's libraries are installed here:
     %s\n""" %
-    (sys.argv[0], '\n    '.join(supybot.__path__)))
+    (sys.executable, '\n    '.join(supybot.__path__)))
     exit(-1)
 
 from supybot.version import version
@@ -117,7 +117,14 @@ def main():
                 for irc in world.ircs:
                     quitmsg = conf.supybot.plugins.Owner.quitMsg() or \
                               'Ctrl-C at console.'
-                    quitmsg = ircutils.standardSubstitute(irc, None, quitmsg)
+                    # Because we're quitting from the console, none of the
+                    # standard msg substitutions exist, and these will show as
+                    # raw strings by default. Substitute them here with
+                    # something meaningful instead.
+                    env = dict((key, '<console>')
+                               for key in ('who', 'nick', 'user', 'host'))
+                    quitmsg = ircutils.standardSubstitute(irc, None, quitmsg,
+                                                          env=env)
                     irc.queueMsg(ircmsgs.quit(quitmsg))
                     irc.die()
         except SystemExit as e:
@@ -149,7 +156,7 @@ def main():
 
 if __name__ == '__main__':
     parser = optparse.OptionParser(usage='Usage: %prog [options] configFile',
-                                   version='Supybot %s running on Python%s' %
+                                   version='Limnoria %s running on Python %s' %
                                    (version, sys.version))
     parser.add_option('-P', '--profile', action='store_true', dest='profile',
                       help='enables profiling')
@@ -208,7 +215,7 @@ if __name__ == '__main__':
             # The registry *MUST* be opened before importing log or conf.
             i18n.getLocaleFromRegistryFilename(registryFilename)
             registry.open_registry(registryFilename)
-            shutil.copy(registryFilename, registryFilename + '.bak')
+            shutil.copyfile(registryFilename, registryFilename + '.bak')
         except registry.InvalidRegistryFile as e:
             s = '%s in %s.  Please fix this error and start supybot again.' % \
                 (e, registryFilename)

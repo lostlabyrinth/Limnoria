@@ -126,7 +126,7 @@ class User(callbacks.Plugin):
             if u._checkCapability('owner'):
                 addHostmask = False
             else:
-                irc.error(_('Your hostmask is already registered to %s') % 
+                irc.error(_('Your hostmask is already registered to %s') %
                           u.name)
                 return
         except KeyError:
@@ -196,10 +196,9 @@ class User(callbacks.Plugin):
             """[<name>] <old password> <new password>
 
             Sets the new password for the user specified by <name> to <new
-            password>.  Obviously this message must be sent to the bot
+            password>. Obviously this message must be sent to the bot
             privately (not in a channel). If the requesting user is an owner
-            user (and the user whose password is being changed isn't that same
-            owner user), then <old password> needn't be correct.
+            user, then <old password> needn't be correct.
             """
             try:
                 u = ircdb.users.getUser(msg.prefix)
@@ -210,7 +209,7 @@ class User(callbacks.Plugin):
                     irc.errorNotRegistered(Raise=True)
                 user = u
             if user.checkPassword(password) or \
-               (u and u._checkCapability('owner') and not u == user):
+               (u and u._checkCapability('owner')):
                 user.setPassword(newpassword)
                 ircdb.users.setUser(user)
                 irc.replySuccess()
@@ -300,14 +299,14 @@ class User(callbacks.Plugin):
                     else:
                         try:
                             user = ircdb.users.getUser(name)
-                            irc.reply(getHostmasks(user))
+                            irc.reply(getHostmasks(user), private=True)
                         except KeyError:
                             irc.errorNoUser()
                 else:
-                    irc.reply(getHostmasks(user))
+                    irc.reply(getHostmasks(user), private=True)
             except KeyError:
                 irc.errorNotRegistered()
-        list = wrap(list, ['private', additional('something')])
+        list = wrap(list, [additional('something')])
 
         @internationalizeDocstring
         def add(self, irc, msg, args, user, hostmask, password):
@@ -322,6 +321,7 @@ class User(callbacks.Plugin):
             must be sent to the bot privately (not on a channel) since it may
             contain a password.
             """
+            caller_is_owner = ircdb.checkCapability(msg.prefix, 'owner')
             if not hostmask:
                 hostmask = msg.prefix
             if not ircutils.isUserHostmask(hostmask):
@@ -336,18 +336,17 @@ class User(callbacks.Plugin):
             try:
                 otherId = ircdb.users.getUserId(hostmask)
                 if otherId != user.id:
-                    irc.error(_('That hostmask is already registered.'),
-                              Raise=True)
+                    if caller_is_owner:
+                        err = _('That hostmask is already registered to %s.')
+                        err %= otherId
+                    else:
+                        err = _('That hostmask is already registered.')
+                    irc.error(err, Raise=True)
             except KeyError:
                 pass
             if not user.checkPassword(password) and \
-               not user.checkHostmask(msg.prefix):
-                try:
-                    u = ircdb.users.getUser(msg.prefix)
-                except KeyError:
-                    irc.error(conf.supybot.replies.incorrectAuthentication(),
-                              Raise=True)
-                if not u._checkCapability('owner'):
+               not user.checkHostmask(msg.prefix) and \
+               not caller_is_owner:
                     irc.error(conf.supybot.replies.incorrectAuthentication(),
                               Raise=True)
             try:
@@ -356,9 +355,14 @@ class User(callbacks.Plugin):
                 irc.error(str(e), Raise=True)
             try:
                 ircdb.users.setUser(user)
-            except ircdb.DuplicateHostmask:
-                irc.error(_('That hostmask is already registered.'),
-                          Raise=True)
+            except ircdb.DuplicateHostmask as e:
+                user.removeHostmask(hostmask)
+                if caller_is_owner:
+                    err = _('That hostmask is already registered to %s.') \
+                              % e.args[0]
+                else:
+                    err = _('That hostmask is already registered.')
+                irc.error(err, Raise=True)
             except ValueError as e:
                 irc.error(str(e), Raise=True)
             irc.replySuccess()
@@ -382,8 +386,7 @@ class User(callbacks.Plugin):
                 hostmask = msg.prefix
             if not user.checkPassword(password) and \
                not user.checkHostmask(msg.prefix):
-                u = ircdb.users.getUser(msg.prefix)
-                if not u._checkCapability('owner'):
+                if not ircdb.checkCapability(msg.prefix, 'owner'):
                     irc.error(conf.supybot.replies.incorrectAuthentication())
                     return
             try:
@@ -480,7 +483,9 @@ class User(callbacks.Plugin):
             user = ircdb.users.getUser(msg.prefix)
             irc.reply(user.name)
         except KeyError:
-            irc.reply(_('I don\'t recognize you. You can message me either of these two commands: "user identify <username> <password>" to log in or "user register <username> <password>" to register.'))
+            error = self.registryValue('customWhoamiError') or \
+                    _('I don\'t recognize you. You can message me either of these two commands: "user identify <username> <password>" to log in or "user register <username> <password>" to register.')
+            irc.reply(error)
     whoami = wrap(whoami)
 
     @internationalizeDocstring

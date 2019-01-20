@@ -72,6 +72,14 @@ class ProcessTimeoutError(Exception):
     """Gets raised when a process is killed due to timeout."""
     pass
 
+def _rlimit_min(a, b):
+    if a == resource.RLIM_INFINITY:
+        return b
+    elif b == resource.RLIM_INFINITY:
+        return a
+    else:
+        return min(soft, heap_size)
+
 def process(f, *args, **kwargs):
     """Runs a function <f> in a subprocess.
     
@@ -79,7 +87,9 @@ def process(f, *args, **kwargs):
     <pn>, the pluginname, and <cn>, the command name, are strings used to
     create the process name, for identification purposes.
     <timeout>, if supplied, limits the length of execution of target 
-    function to <timeout> seconds."""
+    function to <timeout> seconds.
+    <heap_size>, if supplied, limits the memory used by the target
+    function."""
     timeout = kwargs.pop('timeout', None)
     heap_size = kwargs.pop('heap_size', None)
     if resource and heap_size is None:
@@ -107,7 +117,10 @@ def process(f, *args, **kwargs):
     def newf(f, q, *args, **kwargs):
         if resource:
             rsrc = resource.RLIMIT_DATA
-            resource.setrlimit(rsrc, (heap_size, heap_size))
+            (soft, hard) = resource.getrlimit(rsrc)
+            soft = _rlimit_min(soft, heap_size)
+            hard = _rlimit_min(hard, heap_size)
+            resource.setrlimit(rsrc, (soft, hard))
         try:
             r = f(*args, **kwargs)
             q.put(r)
@@ -486,6 +499,16 @@ def getChannel(irc, msg, args, state):
     state.channel = channel
     state.args.append(channel)
 
+def getChannels(irc, msg, args, state):
+    if args and all(map(irc.isChannel, args[0].split(','))):
+        channels = args.pop(0).split(',')
+    elif irc.isChannel(msg.args[0]):
+        channels = [msg.args[0]]
+    else:
+        state.log.debug('Raising ArgumentError because there is no channel.')
+        raise callbacks.ArgumentError
+    state.args.append(channels)
+
 def getChannelDb(irc, msg, args, state, **kwargs):
     channelSpecific = conf.supybot.databases.plugins.channelSpecific
     try:
@@ -728,6 +751,7 @@ wrappers = ircutils.IrcDict({
     'isGranted': getHaveHalfopPlus, # Backward compatibility
     'capability': getSomethingNoSpaces,
     'channel': getChannel,
+    'channels': getChannels,
     'channelOrGlobal': getChannelOrGlobal,
     'channelDb': getChannelDb,
     'checkCapability': checkCapability,

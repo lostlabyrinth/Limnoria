@@ -57,7 +57,7 @@ class Admin(callbacks.Plugin):
         """Nick/channel temporarily unavailable."""
         target = msg.args[0]
         t = time.time() + 30
-        if irc.isChannel(target): # We don't care about nicks.
+        if irc.isChannel(target):
             # Let's schedule a rejoin.
             networkGroup = conf.supybot.networks.get(irc.network)
             def rejoin():
@@ -159,7 +159,7 @@ class Admin(callbacks.Plugin):
         when attempting to join the channel.
         """
         if not irc.isChannel(channel):
-            irc.errorInvalid('channel', channel, Raise=True)
+            irc.errorInvalid(_('channel'), channel, Raise=True)
         networkGroup = conf.supybot.networks.get(irc.network)
         networkGroup.channels().add(channel)
         if key:
@@ -349,6 +349,16 @@ class Admin(callbacks.Plugin):
         irc.queue.reset()
         irc.replySuccess()
     clearq = wrap(clearq)
+
+    def acmd(self, irc, msg, args, commandAndArgs):
+        """<command> [<arg> ...]
+
+        Perform <command> (with associated <arg>s on all channels on current network."""
+        for channel in irc.state.channels:
+            msg.args[0] = channel
+            self.Proxy(irc, msg, commandAndArgs)
+    acmd = wrap(acmd, ['admin', many('something')])
+
 
 
 

@@ -45,6 +45,11 @@ _ = PluginInternationalization('Karma')
 
 import sqlite3
 
+def checkAllowShell(irc):
+    if not conf.supybot.commands.allowShell():
+        irc.error('This command is not available, because '
+            'supybot.commands.allowShell is False.', Raise=True)
+
 class SqliteKarmaDB(object):
     def __init__(self, filename):
         self.dbs = ircutils.IrcDict()
@@ -338,7 +343,6 @@ class Karma(callbacks.Plugin):
                             'things.'))
         else: # No name was given.  Return the top/bottom N karmas.
             limit = self.registryValue('rankingDisplay', channel)
-            top = self.db.top(channel, limit)
             highest = [format('%q (%s)', s, t)
                        for (s, t) in self.db.top(channel, limit)]
             lowest = [format('%q (%s)', s, t)
@@ -396,6 +400,7 @@ class Karma(callbacks.Plugin):
         data directory.  <channel> is only necessary if the message isn't sent
         in the channel itself.
         """
+        checkAllowShell(irc)
         self.db.dump(channel, filename)
         irc.replySuccess()
     dump = wrap(dump, [('checkCapability', 'owner'), 'channeldb', 'filename'])
@@ -408,6 +413,7 @@ class Karma(callbacks.Plugin):
         data directory.  <channel> is only necessary if the message isn't sent
         in the channel itself.
         """
+        checkAllowShell(irc)
         self.db.load(channel, filename)
         irc.replySuccess()
     load = wrap(load, [('checkCapability', 'owner'), 'channeldb', 'filename'])
